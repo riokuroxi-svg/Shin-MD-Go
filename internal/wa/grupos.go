@@ -176,14 +176,31 @@ func (c *Client) GroupInfo(ctx context.Context, group types.JID) (*types.GroupIn
 	return info, groupError(err)
 }
 
+// esperaDescarga: tope de una descarga de medios. Un vídeo de 16 MB por una
+// conexión mala tarda, pero no un minuto: si pasa de aquí, el archivo se cayó y
+// seguir esperando solo ocupa un worker del repartidor que otro necesita.
+const esperaDescarga = 45 * time.Second
+
 // DownloadMedia descarga el contenido de un mensaje (foto, vídeo, audio…). Lo
-// usa `.setgpbanner` para poner de foto del grupo la imagen citada.
+// usan `.sticker`, `.toimg` y `.setgpbanner`.
+//
+// El `ctx` del mensaje viene del proceso (no del mensaje suelto), así que NO
+// lleva plazo: sin el `WithTimeout` de aquí, una descarga que se atasca deja
+// una gorutina colgada para siempre y, con cuatro workers, cuatro descargas
+// atascadas dejan al bot sin carriles hasta reiniciar. Ese es el fallo clásico
+// de "el bot sigue vivo pero ya no contesta".
 func (c *Client) DownloadMedia(ctx context.Context, d whatsmeow.DownloadableMessage) ([]byte, error) {
 	if d == nil {
 		return nil, errors.New("no hay nada que descargar en ese mensaje")
 	}
+	ctx, cancelar := context.WithTimeout(ctx, esperaDescarga)
+	defer cancelar()
+
 	data, err := c.WA.Download(ctx, d)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("la descarga tardó más de %s y se canceló", esperaDescarga)
+		}
 		return nil, err
 	}
 	if len(data) > MaxGroupPhoto {

@@ -62,7 +62,7 @@ func HandleGroupInfo(ctx context.Context, db *store.Store, log *xlog.Logger, evt
 		return
 	}
 
-	if r := activeRouter; r != nil && !evt.JID.IsEmpty() {
+	if r := activeRouter.Load(); r != nil && !evt.JID.IsEmpty() {
 		r.Groups().Invalidate(evt.JID)
 	}
 

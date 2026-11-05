@@ -69,6 +69,7 @@ func init() {
 				fmt.Sprintf("│ Conexión: %s", conexion),
 				fmt.Sprintf("│ Comandos: %d (%d nombres) · %d hooks", unique, aliases, bot.HookCount()),
 				fmt.Sprintf("│ Cola: %s", cola),
+				fmt.Sprintf("│ Mensajes: %s", mensajesEnParalelo()),
 				fmt.Sprintf("│ Calentamiento: desde %s", snap.Anchor.Format("02/01/2006")),
 				fmt.Sprintf("│ Memoria: %s", sizeMB(mem.Alloc)),
 				fmt.Sprintf("│ Go: %s · %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH),
@@ -190,13 +191,26 @@ func init() {
 const repoURL = "https://github.com/riokuroxi-svg/Shin-MD-Go"
 
 // version la rellena main con -ldflags; aquí vale la de por defecto.
-var version = "0.8.0"
+var version = "0.8.1"
 
 // SetVersion permite que main.go publique la versión real en .info.
 func SetVersion(v string) { version = v }
 
 // sendFax dibuja el menú y lo manda como imagen. Si algo falla en el dibujo o
 // en la subida, cae a texto: nunca se queda sin responder.
+// mensajesEnParalelo pinta el estado del repartidor (workers, cola y
+// descartes). Si por lo que sea no hay repartidor (pruebas, arranque a medias),
+// devuelve "1 a la vez" en vez de romper el mensaje.
+func mensajesEnParalelo() string {
+	d := bot.DispatcherActivo()
+	if d == nil {
+		return "1 a la vez (sin repartidor)"
+	}
+	st := d.Stats()
+	return fmt.Sprintf("%d de %d activos · %d/%d en espera · %d descartados",
+		st.Activos, st.Workers, st.EnCola, st.Cola, st.Descartados)
+}
+
 func sendFax(c *bot.Context, categoria string) error {
 	lineas, titulo := menuLines(c, categoria)
 

@@ -142,3 +142,29 @@ func TestOwnersFromDotEnv(t *testing.T) {
 		t.Fatalf("sin .env debería haber 0 owners, hay %v", got)
 	}
 }
+
+// WORKERS y QUEUE: un valor absurdo en el .env no puede abrir 999 gorutinas ni
+// una cola de un millón de mensajes en memoria.
+func TestWorkersYColaSeRecortan(t *testing.T) {
+	t.Setenv("STATE_DIR", t.TempDir())
+
+	t.Setenv("WORKERS", "999")
+	t.Setenv("QUEUE", "999999")
+	cfg := Load()
+	if cfg.Workers != 16 || cfg.QueueSize != 1024 {
+		t.Fatalf("WORKERS=%d QUEUE=%d, se esperaba 16 y 1024", cfg.Workers, cfg.QueueSize)
+	}
+
+	t.Setenv("WORKERS", "0")
+	t.Setenv("QUEUE", "-5")
+	cfg = Load()
+	if cfg.Workers != 1 || cfg.QueueSize != 1 {
+		t.Fatalf("WORKERS=%d QUEUE=%d, se esperaba 1 y 1", cfg.Workers, cfg.QueueSize)
+	}
+
+	t.Setenv("WORKERS", "no-es-un-numero")
+	cfg = Load()
+	if cfg.Workers != 4 {
+		t.Fatalf("WORKERS=%d, se esperaba el valor por defecto (4)", cfg.Workers)
+	}
+}

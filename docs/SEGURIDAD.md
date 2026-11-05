@@ -269,3 +269,28 @@ go test ./internal/media -v
 grep -rn "ezgif\|http.Post\|http.Get" internal/media cmds/stickers.go   # vacío
 grep -rn "exec.Command" internal/media                                   # solo ffmpeg
 ```
+
+## Concurrencia y agotamiento de recursos (0.8.1)
+
+Lo que puede tumbar un bot no es solo un ataque externo: es quedarse sin
+gorutinas o sin memoria por dentro.
+
+| Riesgo | Mitigación | Prueba |
+|---|---|---|
+| Un comando lento bloquea todos los mensajes (whatsmeow entrega de uno en uno) | repartidor con 4 workers y cola de 128: lo que llega se atiende en paralelo | `TestUnMensajeLentoNoBloqueaALosDemas`, `TestUnSoloWorkerSerializa` |
+| La cola de espera crece sin fin y consume memoria | cola con techo: si se llena se descarta y se cuenta, nunca se bloquea la lectura | `TestColaLlenaDescartaSinBloquear` |
+| Un pánico en un handler mata un carril para siempre | `recover()` por mensaje dentro del worker (además del `recover` del router) | `TestPanicoNoMataElWorker` |
+| Cerrar el bot mientras llegan mensajes ⇒ `send on closed channel` | candado de lectura/escritura: `Close` cierra la cola en exclusiva | `TestSubmitYCierreConcurrentes` (con `-race`) |
+| Al apagar, un handler atascado impide terminar | espera máxima de 5 s y salida | `TestCierreNoSeCuelga`, `TestContextoCanceladoParaLosWorkers` |
+| Una descarga de medios atascada se come un worker | plazo de 45 s en `DownloadMedia` | verificado en revisión; el plazo es explícito en el código |
+| `WORKERS=9999` en el `.env` | se recorta a 16; la cola a 1024 | `TestWorkersYColaSeRecortan` |
+| Mapas compartidos (afk, bot-apagado, caché de grupos, límites) | cada uno con su `sync.Mutex` **y** un techo de claves | `-race` en toda la batería |
+
+Verificación:
+
+```bash
+go test -race ./...     # 8 paquetes en verde
+go build ./... && go vet ./... && gofmt -l .
+```
+
+El detalle de cada fallo encontrado está en `docs/CAMBIOS.md` §32–35.

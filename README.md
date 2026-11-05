@@ -162,6 +162,8 @@ ANTIBAN_PERCHAR_MS=25
 WARMUP_START=20
 WARMUP_END=500
 RICH_AI=0        # 1 = respuestas enriquecidas estilo IA (experimental)
+WORKERS=4        # mensajes que se atienden a la vez (1 = uno detrás de otro)
+QUEUE=128        # cuántos mensajes pueden esperar antes de descartar
 CHARACTERS_FILE=data/characters.json   # catálogo del gacha (si falta, lo dice)
 ```
 
@@ -224,12 +226,14 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 215 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 226 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
                  # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
                  # advertencias y actividad de grupo, juegos de azar (probabilidad
                  # de ruleta, tragaperras y casino, y topes de las apuestas),
-                 # stickers (EXIF, formas, filtros y conversión con ffmpeg)
+                 # stickers (EXIF, formas, filtros y conversión con ffmpeg),
+                 # repartidor de mensajes (paralelo, cola con techo, cierres)
+go test -race ./...   # lo mismo con el detector de carreras: los 8 paquetes en verde
 go vet ./...     # limpio
 gofmt -l .       # limpio
 ```
@@ -238,6 +242,11 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.8.1** — auditoría de concurrencia. Los mensajes se atienden en paralelo
+  (4 gorutinas, cola con techo): antes, un `.sticker` de vídeo dejaba al bot
+  sordo hasta un minuto porque whatsmeow entrega los eventos de uno en uno.
+  Además: plazo de 45 s en las descargas, dos punteros globales a atómicos y
+  `go test -race` limpio. Detalle en **[docs/CAMBIOS.md](docs/CAMBIOS.md)** §32–35.
 - **0.8.0** — bloque B5: **stickers y medios**. `.sticker` (con formas y
   efectos), `.toimg` y `.stickerinfo`, todo en Go puro salvo el vídeo. El
   paquete EXIF se escribe a mano (sin `node-webpmux`) y la conversión a vídeo es

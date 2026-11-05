@@ -26,7 +26,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.8.0"
+var version = "0.8.1"
 
 func main() {
 	var (
@@ -95,7 +95,20 @@ func main() {
 	log.Info(fmt.Sprintf("Comandos cargados: %d únicos · %d nombres · %d hooks", uniq, aliases, bot.HookCount()))
 
 	router := bot.NewRouter(cfg, log, client, db, owners)
-	client.OnMessage(router.Handle)
+
+	// Los mensajes se atienden en varias gorutinas. whatsmeow entrega los
+	// eventos de uno en uno: sin esto, un `.sticker` de vídeo (descarga +
+	// ffmpeg + subida) dejaba al bot sordo hasta un minuto y los mensajes se
+	// apilaban en su cola interna hasta descartarse.
+	despachador := bot.NewDispatcher(router.Handle, cfg.Workers, cfg.QueueSize, log)
+	despachador.Start(ctx)
+	defer despachador.Close()
+	bot.SetDispatcher(despachador)
+	log.Info(fmt.Sprintf("Mensajes en paralelo: %d a la vez · %d en espera",
+		cfg.Workers, cfg.QueueSize))
+	client.OnMessage(func(ctx context.Context, evt *events.Message) {
+		despachador.Submit(evt)
+	})
 	// Cambios de grupo (entradas, salidas, ascensos…): la bienvenida, la
 	// despedida y el refresco de la caché de permisos.
 	client.OnGroupInfo(func(ctx context.Context, evt *events.GroupInfo) {

@@ -66,10 +66,11 @@ func NormalizeOwners(in []string) []string {
 // comandos que tienen que proteger al dueño (nadie puede expulsarlo ni
 // degradarlo).
 func IsBotOwner(jid types.JID) bool {
-	if activeRouter == nil || jid.IsEmpty() {
+	r := activeRouter.Load()
+	if r == nil || jid.IsEmpty() {
 		return false
 	}
-	return IsOwner(jid, types.EmptyJID, activeRouter.owner)
+	return IsOwner(jid, types.EmptyJID, r.owner)
 }
 
 func IsOwner(jid, alt types.JID, owners []string) bool {

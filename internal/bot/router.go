@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.mau.fi/whatsmeow/types"
@@ -86,21 +87,24 @@ func NewRouter(cfg config.Config, log *xlog.Logger, client *wa.Client, db *store
 // El bot es un proceso con un solo router; los comandos que cambian ajustes
 // globales (.self, .public) lo necesitan. Se expone aquí para no meter el
 // router dentro del Context (que se construye por mensaje).
-var activeRouter *Router
+// Se guarda en un atómico porque lo leen los eventos de grupo y el hook de
+// `.bot` desde gorutinas distintas de la que lo escribe. Un puntero pelado aquí
+// es una carrera invisible hasta que un día el bot pierde el ajuste.
+var activeRouter atomic.Pointer[Router]
 
 // SetActiveRouter registra el router del proceso (lo llama main / NewRouter).
-func SetActiveRouter(r *Router) { activeRouter = r }
+func SetActiveRouter(r *Router) { activeRouter.Store(r) }
 
 // ForgetChat tira la caché de "bot apagado" de un chat. Lo llama el comando
 // .bot cuando cambia el ajuste, para que surta efecto al instante.
 func ForgetChat(chat types.JID) {
-	if activeRouter != nil {
-		activeRouter.ForgetBotOff(chat)
+	if r := activeRouter.Load(); r != nil {
+		r.ForgetBotOff(chat)
 	}
 }
 
 // ActiveRouter devuelve el router del proceso (nil si aún no hay).
-func ActiveRouter() *Router { return activeRouter }
+func ActiveRouter() *Router { return activeRouter.Load() }
 
 // Cliente expone el cliente de WhatsApp (lo usa el oyente de bienvenida, que
 // corre fuera de un comando y no tiene Context).

@@ -564,3 +564,75 @@ quitando el envoltorio al leer (`desenvolverWebP`), no al escribir: el archivo
 que se manda a WhatsApp conserva su `VP8X`.
 
 **Pruebas nuevas en esta ronda:** 24. Total del repo: **215**.
+
+---
+
+# Cambios 0.8.1 — concurrencia (auditoría con `-race`)
+
+## 32. Un mensaje lento dejaba al bot sordo (y la cola de WhatsApp se llenaba)
+
+**Síntoma:** si alguien mandaba un vídeo al `.sticker` (o un `.toimg` de un
+sticker animado), el bot dejaba de contestar entre 10 y 60 segundos. Después
+llegaba una ráfaga de respuestas viejas, o directamente ninguna.
+
+**Raíz:** whatsmeow **no paraleliza los handlers**. Su bucle de nodos
+(`handlerQueueLoop`) llama al handler y espera a que termine antes de coger el
+siguiente nodo de una cola interna de 2048. Como `.sticker` hace tres cosas
+lentas seguidas (descargar el archivo, convertirlo con ffmpeg y subir el
+resultado), todo lo que llegaba mientras tanto se apilaba — y una conversación
+activa en dos grupos basta para llenar 2048 nodos. Cuando se llena, los mensajes
+se descartan y el bot "pierde" comandos.
+
+**Arreglo:** `internal/bot/dispatcher.go`. Cuatro gorutinas fijas (configurable,
+tope 16) leen de una cola con techo (128 por defecto). Si la cola se llena, el
+mensaje se descarta **y se cuenta**, en vez de bloquear la conexión. Lo que no
+se rompe al paralelizar:
+
+- **El dinero**, porque cada movimiento es una sentencia atómica en SQLite;
+- **el espaciado anti-ban**, porque los envíos siguen pasando por `wa.Queue`,
+  que serializa;
+- **el orden dentro de una conversación**, que sí puede cambiar (dos mensajes
+  seguidos pueden responderse al revés si uno tarda más). En este bot ningún
+  comando depende de eso.
+
+`.info` muestra ahora `Mensajes: 2 de 4 activos · 1/128 en espera · 0 descartados`.
+
+## 33. Una descarga de medios atascada se comía un worker para siempre
+
+**Síntoma:** latente. El `ctx` que se pasaba a `DownloadMedia` era el del
+proceso, no el del mensaje: **sin plazo**.
+
+**Raíz:** `whatsmeow.Download` respeta el contexto, pero el contexto no tenía
+fecha límite. Una descarga que se cae a la mitad puede quedarse esperando
+indefinidamente (conexión medio abierta, servidor que no cierra). Con un solo
+handler eso solo colgaba el bot; con varios, cada descarga atascada se come un
+carril hasta que no queda ninguno.
+
+**Arreglo:** 45 segundos de plazo dentro de `DownloadMedia` y un mensaje claro
+("la descarga tardó más de 45s y se canceló"). Como el repartidor las cancela,
+el carril vuelve a estar libre.
+
+## 34. Dos punteros globales sin protección (carrera latente)
+
+`activeRouter` y el repartidor se leían desde los eventos de grupo y desde
+`.info` (otra gorutina) mientras el arranque los escribía. En la práctica no
+petaba porque se escriben una vez al principio, pero es exactamente el tipo de
+carrera que aparece una vez cada mil reinicios y que `-race` sí ve. Ahora son
+`atomic.Pointer`.
+
+## 35. Un bug de mi propio despachador, cazado por las pruebas
+
+La primera versión guardaba el canal de trabajo en un campo y `Close()` lo ponía
+a `nil`. Los workers leían el campo en cada vuelta del `select`, así que al
+cerrar se quedaban esperando en un canal `nil` — y recibir de un canal `nil`
+bloquea **para siempre**. Las pruebas (`TestCierreNoSeCuelga`) lo detectaron
+antes de subir nada: ahora los workers se quedan con su propia copia del canal.
+
+**Auditoría completa con `-race`:** `go test -race ./...` pasa en los 8 paquetes
+(215 → **226 pruebas**). Se revisaron además, uno por uno, los patrones que
+suelen romper un bot en Go: mapas compartidos sin candado (los cuatro tienen su
+`sync.Mutex` y su techo de tamaño), lecturas de campos de `Context` desde otras
+gorutinas (cada `Context` es de un solo mensaje), `WaitGroup.Add` dentro de la
+gorutina (aquí se llama antes), `time.After` en bucles calientes (no hay bucles
+calientes) y transacciones SQLite que abren otra conexión con `MaxOpenConns(1)`
+(las tres transacciones piden todo lo que necesitan **antes** de `BeginTx`).

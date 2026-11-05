@@ -40,6 +40,8 @@ type Config struct {
 	// y sigue funcionando con el catálogo vacío en vez de romper.
 	GachaFile   string // CHARACTERS_FILE (por defecto data/characters.json)
 	BotName     string // BOT_NAME (por defecto "SHIN-MD")
+	Workers     int    // WORKERS: mensajes procesados a la vez (1 = como antes)
+	QueueSize   int    // QUEUE: cuántos mensajes pueden esperar antes de descartar
 	StickerPack string // STICKER_PACK: nombre del paquete en el sticker
 	StickerAuth string // STICKER_AUTHOR: autor que se ve al abrir el sticker
 	MenuImage   bool   // MENU_IMAGE=1: el .menu manda imagen de cabecera
@@ -65,6 +67,19 @@ func (v variables) str(key, def string) string {
 		return got
 	}
 	return def
+}
+
+// num lee un entero y lo deja dentro de [min, max]. Un WORKERS=999 en el .env
+// no puede lanzar 999 gorutinas contra una base que escribe de una en una.
+func (v variables) num(key string, def, min, max int) int {
+	n := v.integer(key, def)
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
 }
 
 func (v variables) integer(key string, def int) int {
@@ -129,6 +144,8 @@ func LoadFrom(envPath string) Config {
 		EnvFile:     used,
 		GachaFile:   vars.str("CHARACTERS_FILE", filepath.Join(stateDir, "characters.json")),
 		BotName:     vars.str("BOT_NAME", "SHIN-MD"),
+		Workers:     vars.num("WORKERS", 4, 1, 16),
+		QueueSize:   vars.num("QUEUE", 128, 1, 1024),
 		StickerPack: vars.str("STICKER_PACK", "Shin-MD-Go"),
 		StickerAuth: vars.str("STICKER_AUTHOR", "riokuroxi-svg"),
 		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",
