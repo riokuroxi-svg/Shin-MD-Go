@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mdp/qrterminal/v3"
 	"google.golang.org/protobuf/proto"
@@ -34,15 +35,25 @@ import (
 type Client struct {
 	WA        *whatsmeow.Client
 	Queue     *Queue
+	IDs       *Resolver // traduce teléfono ↔ LID (ver identity.go)
 	Log       *xlog.Logger
+	StartedAt time.Time
 	container *sqlstore.Container
 	cfg       config.Config
+
+	// baseCtx es el contexto del proceso: los handlers y los envíos lo heredan
+	// para que un Ctrl+C los cancele a todos. Antes cada envío usaba
+	// context.Background() y un cierre limpio no cancelaba nada.
+	baseCtx context.Context
 
 	onMessage func(ctx context.Context, evt *events.Message)
 }
 
 // New abre la base de sesión y construye el cliente. No se conecta todavía.
-func New(ctx context.Context, cfg config.Config, log *xlog.Logger) (*Client, error) {
+//
+// `mem` es la base del bot (economía, settings, identidades); se usa para que
+// las parejas LID ↔ teléfono sobrevivan a la sesión. Puede ser nil.
+func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityStore) (*Client, error) {
 	if err := os.MkdirAll(filepath.Dir(cfg.AuthFile), 0o700); err != nil {
 		return nil, fmt.Errorf("crear carpeta de sesión: %w", err)
 	}
@@ -57,8 +68,18 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger) (*Client, err
 
 	device, err := container.GetFirstDevice(ctx)
 	if err != nil {
+		_ = container.Close()
 		return nil, fmt.Errorf("leer dispositivo: %w", err)
 	}
+
+	// auth.db guarda las llaves de la sesión: si el archivo queda legible para
+	// otros usuarios del servidor, cualquiera puede suplantar el número.
+	secureSessionFiles(cfg.AuthFile, log)
+
+	// El mapeo LID ↔ teléfono pasa por nuestro envoltorio: así todo lo que la
+	// librería aprende se guarda también en la base del bot, y lo aprendido en
+	// una sesión anterior se puede usar en la siguiente.
+	device.LIDs = newLIDStore(device.LIDs, mem, log)
 
 	cli := whatsmeow.NewClient(device, waLog.Stdout("whatsmeow", "WARN", true))
 	cli.EnableAutoReconnect = true // clave: nada de borrar la sesión por cortes de red
@@ -66,9 +87,12 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger) (*Client, err
 	c := &Client{
 		WA:        cli,
 		Queue:     NewQueue(cfg),
+		IDs:       NewResolver(mem, log),
 		Log:       log,
+		StartedAt: time.Now(),
 		container: container,
 		cfg:       cfg,
+		baseCtx:   ctx,
 	}
 
 	// Igual que en Shin-MD: nunca se borra una sesión registrada por un corte
@@ -85,7 +109,7 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger) (*Client, err
 			log.Err("Sesión cerrada desde el teléfono (LoggedOut) — hace falta vincular otra vez")
 		case *events.Message:
 			if c.onMessage != nil {
-				c.onMessage(context.Background(), evt)
+				c.onMessage(c.baseCtx, evt)
 			}
 		}
 	})
@@ -93,9 +117,31 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger) (*Client, err
 	return c, nil
 }
 
+// secureSessionFiles pone 600 en la base de sesión y en sus archivos WAL/SHM.
+func secureSessionFiles(path string, log *xlog.Logger) {
+	for _, f := range []string{path, path + "-wal", path + "-shm"} {
+		if _, err := os.Stat(f); err != nil {
+			continue
+		}
+		if err := os.Chmod(f, 0o600); err != nil {
+			log.Warn("no se pudieron ajustar los permisos de " + f + ": " + err.Error())
+		}
+	}
+}
+
 func (c *Client) OnMessage(fn func(ctx context.Context, evt *events.Message)) { c.onMessage = fn }
 
 func (c *Client) LoggedIn() bool { return c.WA.Store.ID != nil }
+
+// OwnLID es el LID del propio bot (vacío si WhatsApp no lo dio todavía).
+// Lo usan los comandos que necesitan saber cómo aparece el bot en un grupo.
+func (c *Client) OwnLID() types.JID { return c.WA.Store.GetLID().ToNonAD() }
+
+// Uptime: tiempo desde que arrancó el proceso (lo muestra .ping).
+func (c *Client) Uptime() time.Duration { return time.Since(c.StartedAt) }
+
+// Context devuelve el contexto del proceso, para lo que no viene de un mensaje.
+func (c *Client) Context() context.Context { return c.baseCtx }
 
 func (c *Client) Close() {
 	c.WA.Disconnect()
@@ -152,18 +198,14 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 
 // SendText respeta la cola anti-ban. priority salta el cupo de calentamiento.
 func (c *Client) SendText(ctx context.Context, chat types.JID, text string, priority bool) error {
-	if err := c.Queue.Wait(ctx, len([]rune(text)), priority); err != nil && err != ErrWarmupLimit {
+	return c.Queue.Do(ctx, len([]rune(text)), priority, func() error {
+		_, err := c.WA.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
 		return err
-	}
-	_, err := c.WA.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
-	return err
+	})
 }
 
 // SendImage sube y manda una imagen con pie de foto.
-func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, caption string) error {
-	if err := c.Queue.Wait(ctx, len([]rune(caption)), false); err != nil && err != ErrWarmupLimit {
-		return err
-	}
+func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, caption string, priority bool) error {
 	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaImage)
 	if err != nil {
 		return err
@@ -178,8 +220,10 @@ func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, cap
 		FileLength:    proto.Uint64(up.FileLength),
 		Mimetype:      proto.String("image/jpeg"),
 	}}
-	_, err = c.WA.SendMessage(ctx, chat, msg)
-	return err
+	return c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
+		_, err := c.WA.SendMessage(ctx, chat, msg)
+		return err
+	})
 }
 
 // Presence: "available" / "unavailable" / "composing" (como el JS).

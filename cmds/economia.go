@@ -21,15 +21,28 @@ func init() {
 		Cooldown: 5,
 		Run: func(c *bot.Context) error {
 			ctx := c.Ctx
-			jid := c.Sender.String()
+			jid := c.Key() // teléfono si se conoce, LID si no (nunca dos cuentas)
+			day := time.Now().UTC().Format("2006-01-02")
 
-			// La lógica de "una vez al día" se guarda en settings (mismo patrón
-			// que el JS) para que no haya que añadir columnas cada vez.
-			key := "daily_" + time.Now().Format("2006-01-02")
-
-			// (marcador de posición: aquí iría store.Setting/ToSetting para leer
-			// si ya lo reclamó; se deja simple para el esqueleto)
-			_ = key
+			// El día se reserva ANTES de pagar: si el usuario ya lo reclamó, la
+			// base de datos lo dice y no se suma nada. Una sola sentencia, sin
+			// carrera entre dos mensajes seguidos.
+			claimed, err := c.DB.ClaimDaily(ctx, jid, day)
+			if err != nil {
+				return err
+			}
+			if !claimed {
+				acc, err := c.DB.Get(ctx, jid)
+				if err != nil {
+					return err
+				}
+				return c.ReplyButtons(
+					"🎁 Recompensa diaria",
+					fmt.Sprintf("╭─「 *DAILY* 」\n│ Ya reclamaste tu recompensa hoy.\n│ Vuelve a partir de las 00:00 UTC.\n│ Cartera: *%d*\n╰─", acc.Coins),
+					"Una por día",
+					bot.QuickReply("👤 Perfil", "perfil"),
+				)
+			}
 
 			premio := int64(100 + rand.Intn(151))
 			coins, err := c.DB.AddCoins(ctx, jid, premio)
@@ -58,7 +71,7 @@ func init() {
 		Category: bot.CatPerfil,
 		Desc:     "Tu perfil y economía",
 		Run: func(c *bot.Context) error {
-			acc, err := c.DB.Get(c.Ctx, c.Sender.String())
+			acc, err := c.DB.Get(c.Ctx, c.Key())
 			if err != nil {
 				return err
 			}
@@ -66,9 +79,17 @@ func init() {
 			if nombre == "" {
 				nombre = c.Sender.User
 			}
+			last, err := c.DB.LastDaily(c.Ctx, c.Key())
+			if err != nil {
+				return err
+			}
+			daily := "disponible ✓"
+			if last == time.Now().UTC().Format("2006-01-02") {
+				daily = "reclamado hoy"
+			}
 			return c.Reply(fmt.Sprintf(
-				"╭─「 *PERFIL* 」\n│ 👤 %s\n│ 💰 Cartera: %d\n│ 🏦 Banco: %d\n│ ⭐ Nivel: %d (%d XP)\n╰─",
-				nombre, acc.Coins, acc.Bank, acc.Level, acc.XP))
+				"╭─「 *PERFIL* 」\n│ 👤 %s\n│ 💰 Cartera: %d\n│ 🏦 Banco: %d\n│ ⭐ Nivel: %d (%d XP)\n│ 🎁 Daily: %s\n╰─",
+				nombre, acc.Coins, acc.Bank, acc.Level, acc.XP, daily))
 		},
 	})
 }

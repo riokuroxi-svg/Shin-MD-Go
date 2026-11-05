@@ -38,6 +38,22 @@ var migrations = []string{
 		count INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (jid, group_jid)
 	);`,
+	// 4) .daily tiene que ser "una vez al día" de verdad. Se guarda el día en
+	// una tabla propia (antes se intentaba con una clave por fecha en
+	// settings, que solo crecía y no impedía reclamar dos veces).
+	`CREATE TABLE IF NOT EXISTS daily_claims (
+		jid TEXT PRIMARY KEY,
+		day TEXT NOT NULL
+	);`,
+	// 5) Identidades: LID (el identificador interno de WhatsApp) ↔ teléfono.
+	// WhatsApp puede mandar al mismo usuario como 521…@s.whatsapp.net o como
+	// 123…@lid. Sin esta tabla, la misma persona tendría dos cuentas de monedas
+	// según por dónde llegue el mensaje.
+	`CREATE TABLE IF NOT EXISTS identities (
+		lid TEXT PRIMARY KEY,
+		pn  TEXT NOT NULL
+	);`,
+	`CREATE INDEX IF NOT EXISTS identities_pn ON identities(pn);`,
 }
 
 func Open(path string) (*Store, error) {
@@ -135,6 +151,9 @@ func (s *Store) AddXP(ctx context.Context, jid string, delta int64) (*Account, e
 		return nil, err
 	}
 	acc.XP += delta
+	if acc.XP < 0 { // un coste mayor que la XP acumulada no debe dejar el nivel en negativo
+		acc.XP = 0
+	}
 	level := 1
 	for xp := acc.XP; xp >= int64(level*100); xp -= int64(level * 100) {
 		level++
@@ -146,13 +165,209 @@ func (s *Store) AddXP(ctx context.Context, jid string, delta int64) (*Account, e
 	return acc, err
 }
 
-// Setting guarda config por JID (self mode, antilink, etc.) igual que el JS.
-func (s *Store) Setting(ctx context.Context, jid, key, value string) error {
+// validKey acepta solo claves simples (letras, números, guion y guion bajo).
+// La clave entra en la ruta JSON de SQLite: si se dejara pasar una comilla o
+// un punto, se podría reescribir el JSON entero (o romper la consulta).
+func validKey(key string) bool {
+	if key == "" || len(key) > 48 {
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// SetSetting guarda un valor de texto para un JID (self mode, antilink, etc.),
+// igual que el JS. El valor se guarda como string JSON.
+func (s *Store) SetSetting(ctx context.Context, jid, key, value string) error {
+	if !validKey(key) {
+		return fmt.Errorf("clave de setting inválida: %q", key)
+	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO settings(jid, json) VALUES(?, json_set(COALESCE((SELECT json FROM settings WHERE jid=?), '{}'), '$.' || ?, ?))
-		ON CONFLICT(jid) DO UPDATE SET json = json_set(settings.json, '$.' || ?, ?)`,
-		jid, jid, key, value, key, value)
+		INSERT INTO settings(jid, json) VALUES(?, json_set('{}', ?, ?))
+		ON CONFLICT(jid) DO UPDATE SET json = json_set(settings.json, ?, ?)`,
+		jid, "$."+key, value, "$."+key, value)
 	return err
+}
+
+// GetSetting lee un valor de texto. ok=false si no existe.
+func (s *Store) GetSetting(ctx context.Context, jid, key string) (value string, ok bool, err error) {
+	if !validKey(key) {
+		return "", false, fmt.Errorf("clave de setting inválida: %q", key)
+	}
+	var raw sql.NullString
+	err = s.db.QueryRowContext(ctx, `SELECT json_extract(json, ?) FROM settings WHERE jid = ?`, "$."+key, jid).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if !raw.Valid || raw.String == "" {
+		return "", false, nil
+	}
+	return raw.String, true, nil
+}
+
+// SystemJID identifica los ajustes del propio bot (no de un usuario).
+const SystemJID = "__shin__"
+
+const keyWarmupAnchor = "warmup_anchor"
+
+// WarmupAnchor devuelve el primer día del calentamiento y lo crea la primera
+// vez. Antes el ancla vivía en memoria y se reiniciaba en cada arranque, así
+// que el número nunca pasaba de 20 mensajes/día: el warm-up no avanzaba jamás.
+func (s *Store) WarmupAnchor(ctx context.Context, now time.Time) (time.Time, error) {
+	if v, ok, err := s.GetSetting(ctx, SystemJID, keyWarmupAnchor); err != nil {
+		return now.UTC(), err
+	} else if ok {
+		if t, err := time.Parse("2006-01-02", v); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	day := now.UTC().Format("2006-01-02")
+	if err := s.SetSetting(ctx, SystemJID, keyWarmupAnchor, day); err != nil {
+		return now.UTC(), err
+	}
+	t, err := time.Parse("2006-01-02", day)
+	return t.UTC(), err
+}
+
+// ClaimDaily marca el día como reclamado y dice si ESTA llamada fue la que lo
+// reclamó. La comprobación y la escritura son una sola sentencia, así que dos
+// mensajes .daily seguidos no pueden dar premio dos veces (antes se sumaban
+// monedas sin límite: no había ninguna comprobación, solo un comentario).
+func (s *Store) ClaimDaily(ctx context.Context, jid, day string) (claimed bool, err error) {
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO daily_claims(jid, day) VALUES(?, ?)
+		ON CONFLICT(jid) DO UPDATE SET day = excluded.day
+		WHERE daily_claims.day <> excluded.day`, jid, day)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// LastDaily devuelve el último día reclamado ("" si nunca).
+func (s *Store) LastDaily(ctx context.Context, jid string) (string, error) {
+	var day string
+	err := s.db.QueryRowContext(ctx, `SELECT day FROM daily_claims WHERE jid = ?`, jid).Scan(&day)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return day, err
+}
+
+// ─── Identidades LID ↔ teléfono ──────────────────────────────────────────────
+//
+// En WhatsApp moderno un mismo usuario puede aparecer como dos JID distintos:
+//
+//	5215512345678@s.whatsapp.net   (PN, el teléfono)
+//	123456789012345@lid            (LID, identificador interno, sin teléfono)
+//
+// El bot tiene que tratarlos como la MISMA persona. La red solo resuelve
+// PN → LID (nunca al revés para un LID desconocido), así que las parejas se
+// guardan aquí en cuanto aparecen en un mensaje o en el grupo.
+
+// PutIdentity guarda una pareja LID → teléfono. Cadena vacía en cualquiera de
+// los dos no se guarda (no hay nada que aprender).
+//
+// Además FUSIONA las cuentas: si alguien escribió mientras solo se conocía su
+// LID, sus monedas quedaron en una fila con llave @lid. Al aprender el
+// teléfono se mueven a la llave buena (o se suman si ya existían las dos), así
+// nadie pierde economía por culpa del cambio de identificadores de WhatsApp.
+func (s *Store) PutIdentity(ctx context.Context, lid, pn string) error {
+	if lid == "" || pn == "" || lid == pn {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO identities(lid, pn) VALUES(?, ?)
+		ON CONFLICT(lid) DO UPDATE SET pn = excluded.pn`, lid, pn); err != nil {
+		return err
+	}
+	return s.mergeAccounts(ctx, lid, pn)
+}
+
+// mergeAccounts mueve (o suma) la cuenta del LID a la del teléfono, y con
+// ella la marca del daily (para que no pueda reclamarlo otra vez).
+func (s *Store) mergeAccounts(ctx context.Context, lid, pn string) error {
+	var lidExists, pnExists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE jid = ?)`, lid).Scan(&lidExists); err != nil {
+		return err
+	}
+	if !lidExists {
+		return nil
+	}
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE jid = ?)`, pn).Scan(&pnExists); err != nil {
+		return err
+	}
+
+	if pnExists {
+		// Existen las dos: se suman en la del teléfono y se borra la del LID.
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE users
+			   SET coins = coins + (SELECT coins FROM users WHERE jid = ?),
+			       bank  = bank  + (SELECT bank  FROM users WHERE jid = ?),
+			       xp    = xp    + (SELECT xp    FROM users WHERE jid = ?)
+			 WHERE jid = ?`, lid, lid, lid, pn); err != nil {
+			return err
+		}
+		if _, err := s.db.ExecContext(ctx, `DELETE FROM users WHERE jid = ?`, lid); err != nil {
+			return err
+		}
+	} else if _, err := s.db.ExecContext(ctx, `UPDATE users SET jid = ? WHERE jid = ?`, pn, lid); err != nil {
+		return err
+	}
+
+	return s.mergeDaily(ctx, lid, pn)
+}
+
+// mergeDaily traspasa la marca del daily (y la borra del LID).
+func (s *Store) mergeDaily(ctx context.Context, lid, pn string) error {
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO daily_claims(jid, day) SELECT ?, day FROM daily_claims WHERE jid = ?
+		ON CONFLICT(jid) DO UPDATE SET day = MAX(daily_claims.day, excluded.day)`, pn, lid); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM daily_claims WHERE jid = ?`, lid)
+	return err
+}
+
+// PNForLID devuelve el teléfono de un LID ("" si no se conoce todavía).
+func (s *Store) PNForLID(ctx context.Context, lid string) (string, error) {
+	var pn string
+	err := s.db.QueryRowContext(ctx, `SELECT pn FROM identities WHERE lid = ?`, lid).Scan(&pn)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return pn, err
+}
+
+// LIDForPN es la dirección contraria: puede haber varias filas con el mismo
+// teléfono si WhatsApp cambió el LID, así que se devuelve la más reciente.
+func (s *Store) LIDForPN(ctx context.Context, pn string) (string, error) {
+	var lid string
+	err := s.db.QueryRowContext(ctx, `SELECT lid FROM identities WHERE pn = ? ORDER BY rowid DESC LIMIT 1`, pn).Scan(&lid)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return lid, err
+}
+
+// CountIdentities: cuántas parejas se conocen (para /health).
+func (s *Store) CountIdentities(ctx context.Context) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM identities`).Scan(&n)
+	return n, err
 }
 
 // CountUsers: útil para /health del panel web.

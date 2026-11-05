@@ -113,6 +113,8 @@ Traducción honesta:
 
 ---
 
+<!-- roxi estuvo aquí, dejando notas a las 4 de la mañana -->
+
 ## 4. Botones: cómo queda, probado
 
 ```go
@@ -167,21 +169,27 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
 
 ## 6. Plan por bloques (mismo estilo que tu `docs/plan-bloques.md`)
 
-- **B0 · Núcleo** ✅ *hecho en este esqueleto*
+- **B0 · Núcleo** ✅ *hecho* · auditoría de fallos en **docs/CAMBIOS.md** (0.2.0)
   cliente + sesión SQLite + emparejamiento QR/código + cola anti-ban + logger +
   botones + router + economy store + `go test` verde + binario arm64.
   *Verificación:* `go build ./...`, `go vet ./...`, `go test ./...` → ok.
-- **B1 · Paridad de router** (1 sesión de trabajo)
+- **B1 · Paridad de router** ✅ *hecho (0.3.0)*
   hooks `before` (antilink, antistatus, afk), self-mode, `isAdmins/isBotAdmins`
   reales con `GetGroupInfo`, owner por LID **y** por teléfono.
-  *Prueba:* chat de prueba + grupo de prueba.
+  Ya dentro: owner por teléfono **y** por LID (`bot/owner.go`), filtro de
+  `IsFromMe`, estados y difusiones bloqueados antes de todo, contexto
+  cancelable en los handlers y poda del mapa de cooldowns.
+  Además: hooks `before` (`bot/hooks.go`), antilink y afk reales, modo self,
+  `AdminOnly`/`BotAdminOnly` aplicados con `GetGroupInfo` y comparación por
+  LID **y** teléfono, y la capa LID completa (ver **docs/LID.md**).
+  *Prueba:* chat de prueba + grupo de prueba; `.lid` para ver la identidad.
 - **B2 · Menús y meta** (rápido)
   `.menu`, `.menucat`, `.fax`, `.info`, `.owner`, `.ping` con botones.
 - **B3 · Economía y perfil**
   daily, work, banco, ranking, inventario, gacha (tu `ginko-db` se convierte en
   tablas con migraciones; el formato de dinero/XP se conserva para no perder datos).
 - **B4 · Grupos y admin**
-  antilink, antistatus, warn/kick/promote, mute, horario.
+  antistatus, warn/kick/promote, mute, horario. (antilink y afk ya entraron en B1.)
 - **B5 · Stickers y media**
   `sticker`/`toimg`/`tovid` con `ffmpeg` por `os/exec` (igual que hoy) y
   `EXIF` de sticker escrito a mano en Go.

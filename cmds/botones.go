@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"go.mau.fi/whatsmeow/types"
+
 	"shin-go/internal/bot"
 	"shin-go/internal/ui"
+	"shin-go/internal/wa"
 )
 
 func init() {
@@ -41,7 +44,7 @@ func init() {
 		Desc:     "Prueba de lista desplegable clásica",
 		Run: func(c *bot.Context) error {
 			return c.Bot.SendList(c.Ctx, c.Chat,
-				"SHIN-MD", "Elige una opción del desplegable", "Ver opciones", "Lista clásica (ListMessage)",
+				"SHIN-MD", "Elige una opción del desplegable", "Ver opciones", "Lista clásica (ListMessage)", c.Priority(),
 				ui.ListSection{Title: "General", Rows: []ui.ListRow{
 					{ID: "ping", Title: "🏓 Ping", Desc: "latencia del bot"},
 					{ID: "menu", Title: "📋 Menú", Desc: "todos los comandos"},
@@ -61,7 +64,7 @@ func init() {
 		Category: bot.CatMain,
 		Desc:     "Prueba de carrusel (tarjetas deslizables)",
 		Run: func(c *bot.Context) error {
-			return c.Bot.SendCarousel(c.Ctx, c.Chat, "Desliza las tarjetas →",
+			return c.Bot.SendCarousel(c.Ctx, c.Chat, "Desliza las tarjetas →", c.Priority(),
 				ui.Card{Title: "Carta 1", Body: "Ping y estado", Buttons: []ui.Button{bot.QuickReply("🏓 Ping", "ping")}},
 				ui.Card{Title: "Carta 2", Body: "Tu perfil", Buttons: []ui.Button{bot.QuickReply("👤 Perfil", "perfil")}},
 				ui.Card{Title: "Carta 3", Body: "Menú completo", Buttons: []ui.Button{bot.QuickReply("📋 Menú", "menu")}},
@@ -84,7 +87,7 @@ func init() {
 			if len(partes) < 3 {
 				return c.Reply("Necesito pregunta + 2 opciones: .encuesta ¿Café?; sí; no")
 			}
-			return c.Bot.SendPoll(c.Ctx, c.Chat, partes[0], partes[1:], 1)
+			return c.Bot.SendPoll(c.Ctx, c.Chat, partes[0], partes[1:], 1, c.Priority())
 		},
 	})
 
@@ -98,7 +101,7 @@ func init() {
 			start := time.Now().Add(time.Hour)
 			return c.Bot.SendEvent(c.Ctx, c.Chat,
 				"Evento de Shin-MD", "Creado con EventMessage desde Go",
-				start, start.Add(30*time.Minute), true, 10*time.Minute)
+				start, start.Add(30*time.Minute), true, 10*time.Minute, c.Priority())
 		},
 	})
 
@@ -109,11 +112,28 @@ func init() {
 		Category: bot.CatUtils,
 		Desc:     "Fija el mensaje al que respondes",
 		Run: func(c *bot.Context) error {
-			ctxInfo := c.Event.Message.GetExtendedTextMessage().GetContextInfo()
+			// El mensaje citado vive dentro del contenido: si respondes a una
+			// foto viene en ImageMessage, si es un audio en AudioMessage… Mirar
+			// solo ExtendedTextMessage hacía que .pin dijera "no respondiste a
+			// nada" con fotos, vídeos, audios y stickers.
+			ctxInfo := wa.ContextInfo(c.Event.Message)
 			if ctxInfo == nil || ctxInfo.GetStanzaID() == "" {
 				return c.Reply("Responde a un mensaje con .pin para fijarlo.")
 			}
-			key := ui.Key(c.Chat, false, ctxInfo.GetStanzaID(), c.Sender)
+
+			// El autor del mensaje citado puede ser otro: se saca del propio
+			// ContextInfo (y solo tiene sentido en grupos).
+			var participant types.JID
+			if c.IsGroup {
+				participant = c.Sender
+				if raw := ctxInfo.GetParticipant(); raw != "" {
+					if jid, err := types.ParseJID(raw); err == nil {
+						participant = jid.ToNonAD()
+					}
+				}
+			}
+
+			key := ui.Key(c.Chat, false, ctxInfo.GetStanzaID(), participant)
 			return c.Bot.PinMessage(c.Ctx, c.Chat, key, true)
 		},
 	})
@@ -130,7 +150,7 @@ func init() {
 				"# Shin-MD\nPrueba de *respuesta enriquecida*:\n- markdown\n- bloques de código\n- tablas",
 				"go", "func main() {\n\tfmt.Println(\"shin\")\n}",
 			)
-			return c.Bot.SendRich(c.Ctx, c.Chat, msg, fallback)
+			return c.Bot.SendRich(c.Ctx, c.Chat, msg, fallback, c.Priority())
 		},
 	})
 }

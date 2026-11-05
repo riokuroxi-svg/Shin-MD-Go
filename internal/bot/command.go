@@ -48,22 +48,91 @@ type Context struct {
 	Log      *xlog.Logger
 	Event    *events.Message
 	DB       *store.Store
+	Groups   *GroupCache
 	Chat     types.JID
 	Sender   types.JID
 	IsGroup  bool
 	IsOwner  bool
 	PushName string
 
+	// Identidad del remitente. WhatsApp puede mandar al mismo usuario como
+	// teléfono o como LID: `SenderKey` es la llave estable para la base (el
+	// teléfono si se conoce) y `SenderAlt` el otro JID, si vino.
+	Identity  wa.Identity
+	SenderKey string
+	SenderAlt types.JID
+
 	Command string
 	Args    []string
 	Text    string // texto completo sin el prefijo
 	Raw     string // texto tal cual llegó
 
+	// CmdPriority es la prioridad del comando que se está ejecutando. La pone
+	// el router a partir de Command.Priority y la respetan TODOS los envíos
+	// del contexto: así .menu no gasta cupo del calentamiento y .daily sí.
+	CmdPriority bool
+
 	fromButton bool
 }
 
+// Priority dice si el comando que corre es prioritario.
+func (c *Context) Priority() bool { return c.CmdPriority }
+
+// Key es la llave del usuario para la base de datos: teléfono si se conoce,
+// LID si no. Todos los comandos deberían guardar datos con esto y no con
+// c.Sender.String(), o el mismo usuario acabaría con dos cuentas.
+func (c *Context) Key() string {
+	if c.SenderKey != "" {
+		return c.SenderKey
+	}
+	return c.Sender.String()
+}
+
+// Admin: ¿el remitente es admin del grupo? (solo tiene sentido en grupos)
+func (c *Context) Admin() bool {
+	if !c.IsGroup || c.Groups == nil {
+		return false
+	}
+	return c.Groups.IsAdmin(c.Ctx, c.Chat, c.Sender, c.SenderAlt)
+}
+
+// BotAdmin: ¿el bot es admin del grupo? Lo necesitan los comandos que borran,
+// expulsan o cambian el grupo.
+func (c *Context) BotAdmin() bool {
+	if !c.IsGroup || c.Groups == nil {
+		return false
+	}
+	return c.Groups.IsBotAdmin(c.Ctx, c.Chat)
+}
+
+// Mentioned devuelve los JID mencionados en el mensaje (@número o respuesta a
+// alguien). Los usa el afk y los comandos de admin.
+func (c *Context) Mentioned() []types.JID {
+	msg := wa.Unwrap(c.Event.Message)
+	if msg == nil {
+		return nil
+	}
+
+	var out []types.JID
+	if ci := wa.ContextInfo(msg); ci != nil {
+		for _, raw := range ci.GetMentionedJID() {
+			if jid, err := types.ParseJID(raw); err == nil {
+				out = append(out, jid.ToNonAD())
+			}
+		}
+		if p := ci.GetParticipant(); p != "" {
+			if jid, err := types.ParseJID(p); err == nil {
+				out = append(out, jid.ToNonAD())
+			}
+		}
+	}
+	return out
+}
+
 // Reply contesta en el mismo chat (pasando por la cola).
-func (c *Context) Reply(text string) error { return c.Bot.SendText(c.Ctx, c.Chat, text, false) }
+func (c *Context) Reply(text string) error {
+	return c.Bot.SendText(c.Ctx, c.Chat, text, c.CmdPriority)
+}
 
 // ReplyPriority contesta saltando el cupo de calentamiento (.menu, .ping…).
 func (c *Context) ReplyPriority(text string) error {
@@ -72,7 +141,12 @@ func (c *Context) ReplyPriority(text string) error {
 
 // ReplyButtons contesta con tarjeta y botones nativos.
 func (c *Context) ReplyButtons(title, body, footer string, buttons ...Button) error {
-	return c.Bot.SendButtons(c.Ctx, c.Chat, title, body, footer, buttons...)
+	return c.Bot.SendButtons(c.Ctx, c.Chat, title, body, footer, c.CmdPriority, buttons...)
+}
+
+// ReplyImage contesta con una tarjeta que lleva imagen de cabecera.
+func (c *Context) ReplyImage(image []byte, title, body, footer string, buttons ...Button) error {
+	return c.Bot.SendButtonsImage(c.Ctx, c.Chat, image, title, body, footer, c.CmdPriority, buttons...)
 }
 
 // Button es alias para no obligar a importar internal/ui en cada comando.
@@ -99,11 +173,12 @@ type Command struct {
 	Category Category
 	Desc     string
 
-	OwnerOnly bool
-	GroupOnly bool
-	AdminOnly bool
-	Priority  bool // salta el cupo diario del calentamiento
-	Cooldown  int  // segundos; 0 = usar el del router
+	OwnerOnly    bool
+	GroupOnly    bool
+	AdminOnly    bool // el que escribe tiene que ser admin del grupo
+	BotAdminOnly bool // el bot tiene que ser admin (para borrar, expulsar…)
+	Priority     bool // salta el cupo diario del calentamiento
+	Cooldown     int  // segundos; 0 = usar el del router
 
 	Run func(c *Context) error
 }
