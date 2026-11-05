@@ -164,3 +164,25 @@ go test ./... -run 'Guard|Clean|Chunk|Injection|Sanitize|Settings|SafeCommand'
 grep -rn "os/exec\|exec.Command" .            # todavía no hay ninguno
 grep -rn "Sprintf(.*SELECT\|Query(.*+ " .     # consultas armadas a mano
 ```
+
+## Gacha (0.5.0)
+
+- **Ninguna clave de API en el código.** El bot de JS llevaba una clave de
+  gelbooru escrita dentro de `rollwaifu.js`; una clave en un repositorio público
+  está quemada. Aquí se consulta un tablero que no pide clave.
+- **Lo que llega de fuera se trata como no confiable.** La imagen se descarga con
+  8 s de espera, tope de 4 MB, comprobación de `Content-Type` (`image/*`) y
+  extensión `.jpg/.png`; los componentes de la URL se limpian (`..` se descarta)
+  antes de pegarse. Probado en `internal/gacha/imagen_test.go`.
+- **Un catálogo ausente no rompe el bot**: se avisa una vez y los comandos
+  responden que está vacío.
+- **Reclamos**: un solo dueño por personaje y chat (clave primaria) y reclamo
+  condicional (`claimed_by IS NULL AND expires_at > ?`), así que no se puede
+  reclamar dos veces ni quedarse con lo caducado.
+
+Verificación rápida:
+
+```bash
+go test ./internal/gacha -v
+grep -rn "api_key\|apikey" .   # no debe salir nada
+```

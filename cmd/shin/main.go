@@ -24,7 +24,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.4.0"
+var version = "0.5.0"
 
 func main() {
 	var (
@@ -67,6 +67,15 @@ func main() {
 	// El ancla del calentamiento (el día en que este número arrancó por primera
 	// vez) se guarda en SQLite: si viviera en memoria, cada reinicio volvería a
 	// 20 mensajes/día y el warm-up nunca llegaría a 500.
+	// Limpieza de rolls caducados del gacha. En el JS cada roll quedaba
+	// guardado dentro del JSON del chat para siempre; aquí se borran los que
+	// caducaron hace más de un día.
+	if borrados, err := db.PurgeRolls(ctx, time.Now()); err != nil {
+		log.Warn("no se pudieron limpiar los rolls del gacha: " + err.Error())
+	} else if borrados > 0 {
+		log.Info(fmt.Sprintf("rolls caducados borrados: %d", borrados))
+	}
+
 	anchor, err := db.WarmupAnchor(ctx, time.Now())
 	if err != nil {
 		log.Warn("no se pudo leer el ancla del calentamiento: " + err.Error())

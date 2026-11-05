@@ -319,3 +319,75 @@ El id de un botón es un dato del mensaje. Ahora el router exige
 
 **Pruebas nuevas en esta ronda:** 22 (fax, límites, salida, seguridad).
 Total del repo: **84**.
+
+# Cambios 0.5.0 — bloque B3 (economía y gacha)
+
+Estos fallos son del **bot de JS original**, no del puerto: se documentan aquí
+porque el código de Go está escrito para no repetirlos, y cada uno tiene su
+prueba.
+
+## 18. El dinero se duplicaba con dos mensajes a la vez
+
+**Raíz:** cada comando hacía `const user = db.getChatUser(...)` → calculaba en
+JavaScript → `db.setChatUser(...)`. Entre la lectura y la escritura caben todos
+los mensajes que quieras: dos `.shop espada` simultáneos leen 1 000 y los dos
+escriben 200. Una espada gratis. Lo mismo en `.deposit`, `.withdraw`,
+`.givecoins` y en los enfriamientos (`.work` dos veces seguidas pagaba dos
+veces).
+
+**Arreglo:** cada movimiento es **una sola sentencia con la condición dentro**
+(`UPDATE ... SET coins = coins - ? WHERE ... AND coins >= ?`). Si no se cumple,
+`RowsAffected()` es 0 y el comando avisa. Pruebas:
+`TestSpendConcurrenteNoDuplica` (40 cobros de 100 sobre 1 000 → pasan 10),
+`TestTransferConcurrente` (8 transferencias con banco para una → el total no
+cambia), `TestClaimCooldownConcurrente` (20 `.daily` a la vez → cobra 1),
+`TestClaimRollConcurrente` (10 reclamos del mismo personaje → gana uno).
+
+## 19. Los saldos podían quedar en negativo o fuera de rango
+
+**Raíz:** `.withdraw` restaba sin comprobar contra el banco del momento y no
+había techo. Un saldo negativo (o `NaN` cuando `parseInt` devolvía `NaN`)
+contagiaba rankings, robos y compras.
+
+**Arreglo:** recorte en SQL a `[0, 1 000 000 000 000]`, transferencias con tope
+de 1 000 000 000, objetos con tope de 9 999 unidades, `parseAmount` estricto
+(`2500abc`, `-500`, `1..2` y `0` se rechazan).
+
+## 20. `.daily` y las rachas se podían cobrar dos veces
+
+**Raíz:** `lastDailyGlobal` se leía y se escribía por separado, y la racha subía
+en JavaScript. Dos mensajes simultáneos daban dos premios y dos días de racha.
+
+**Arreglo:** la racha se calcula **en el mismo UPDATE** (`CASE` de reinicio y de
+tope) y solo entra si ha pasado la cadencia: `ClaimStreak`. El premio del día se
+reserva con `ClaimCooldown` antes de pagar. Pruebas: `TestRachaDiariaSubeYBaja`,
+`TestRachaTope`, `TestRachaEsGlobalNoPorChat`.
+
+## 21. El gacha guardaba los rolls en un JSON que crecía para siempre
+
+**Raíz:** cada `.roll` metía una entrada en `g_chats.rolls` y **nunca se
+borraba**; `characters` se apuntaba en tres sitios a la vez (tabla
+`characters`, tabla `user_characters` y el JSON `g_chat_users.characters`, que
+además podía ser array o texto).
+
+**Arreglo:** `gacha_rolls` (con mensaje, reserva y caducidad) y `gacha_owned`
+(clave `(chat, personaje)`: un solo dueño por chat). Los rolls caducados se
+borran al arrancar (`PurgeRolls`). `.claim` responde al **id del mensaje**
+citado, no a una búsqueda en texto, y el reclamo es un UPDATE condicional
+(`TestClaimRollBasico`, `TestUnDuenoPorPersonaje`).
+
+## 22. El gacha entero dependía de un archivo que no estaba en el repo
+
+**Raíz:** las 18 copias de `loadCharacters` leían `./core/characters.json`, que
+no existe en el repositorio ni lo genera ningún script: un clon limpio tenía 18
+comandos rotos con `ENOENT`. Y las ilustraciones se pedían a tres tableros, uno
+de ellos con una clave de API escrita dentro del código.
+
+**Arreglo:** `internal/gacha` con una sola lectura, caché por fecha de
+modificación, aviso único si falta el archivo y **varias formas de JSON
+aceptadas** (la del JS, lista suelta y lista de series). Las imágenes se buscan
+en un solo tablero de contenido seguro, **sin claves en el código**, con 8 s de
+espera y 4 MB de tope; si no hay imagen, el personaje se anuncia igual
+(`internal/gacha/catalogo_test.go`, `imagen_test.go`).
+
+**Pruebas nuevas en esta ronda:** 66. Total del repo: **150**.

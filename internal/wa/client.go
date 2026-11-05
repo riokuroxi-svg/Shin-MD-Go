@@ -204,6 +204,54 @@ func (c *Client) SendText(ctx context.Context, chat types.JID, text string, prio
 	})
 }
 
+// SendQueue es la cola de envío, para quien necesite espaciar varias salidas
+// dentro del mismo comando (el gacha manda la imagen y luego el aviso).
+func (c *Client) SendQueue() *Queue { return c.Queue }
+
+// SendTextID manda texto y devuelve el id del mensaje enviado. Lo necesita el
+// gacha: para reclamar un personaje hay que poder identificar el mensaje que
+// lo anunció, y ese id solo lo da WhatsApp después de enviarlo.
+func (c *Client) SendTextID(ctx context.Context, chat types.JID, text string, priority bool) (string, error) {
+	var id string
+	err := c.Queue.Do(ctx, len([]rune(text)), priority, func() error {
+		resp, err := c.WA.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
+		if err != nil {
+			return err
+		}
+		id = resp.ID
+		return nil
+	})
+	return id, err
+}
+
+// SendImageID sube una imagen con pie de foto y devuelve el id del mensaje.
+func (c *Client) SendImageID(ctx context.Context, chat types.JID, data []byte, caption string, priority bool) (string, error) {
+	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaImage)
+	if err != nil {
+		return "", err
+	}
+	msg := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+		Caption:       proto.String(caption),
+		URL:           proto.String(up.URL),
+		DirectPath:    proto.String(up.DirectPath),
+		MediaKey:      up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256,
+		FileSHA256:    up.FileSHA256,
+		FileLength:    proto.Uint64(up.FileLength),
+		Mimetype:      proto.String("image/jpeg"),
+	}}
+	var id string
+	err = c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
+		resp, err := c.WA.SendMessage(ctx, chat, msg)
+		if err != nil {
+			return err
+		}
+		id = resp.ID
+		return nil
+	})
+	return id, err
+}
+
 // SendImage sube y manda una imagen con pie de foto.
 func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, caption string, priority bool) error {
 	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaImage)

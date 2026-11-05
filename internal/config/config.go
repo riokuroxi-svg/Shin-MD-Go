@@ -35,6 +35,10 @@ type Config struct {
 	RichAI   bool   // RICH_AI=1: respuestas enriquecidas estilo IA (experimental)
 	EnvFile  string // ruta del .env que se leyó ("" si no había)
 
+	// GachaFile: catálogo de personajes (mismo nombre de variable que el bot
+	// de JS: CHARACTERS_FILE). Si el archivo no está, el gacha lo dice una vez
+	// y sigue funcionando con el catálogo vacío en vez de romper.
+	GachaFile   string // CHARACTERS_FILE (por defecto data/characters.json)
 	BotName     string // BOT_NAME (por defecto "SHIN-MD")
 	MenuImage   bool   // MENU_IMAGE=1: el .menu manda imagen de cabecera
 	OwnerName   string // OWNER_NAME: cómo se llama el dueño en .owner
@@ -121,6 +125,7 @@ func LoadFrom(envPath string) Config {
 		LogLevel:    vars.str("LOG_LEVEL", "info"),
 		RichAI:      vars.str("RICH_AI", "0") == "1",
 		EnvFile:     used,
+		GachaFile:   vars.str("CHARACTERS_FILE", filepath.Join(stateDir, "characters.json")),
 		BotName:     vars.str("BOT_NAME", "SHIN-MD"),
 		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",
 		OwnerName:   vars.str("OWNER_NAME", "el dueño"),

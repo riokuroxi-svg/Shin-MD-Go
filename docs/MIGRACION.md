@@ -186,9 +186,16 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
 - **B2 · Menús y meta** ✅ *hecho (0.4.0)*
   `.menu`, `.menucat`, `.fax` (imagen dibujada en Go, sin dependencias),
   `.info`, `.owner`, `.report`, `.ping` con botones.
-- **B3 · Economía y perfil**
-  daily, work, banco, ranking, inventario, gacha (tu `ginko-db` se convierte en
-  tablas con migraciones; el formato de dinero/XP se conserva para no perder datos).
+- **B3 · Economía, perfil y gacha** ✅ *hecho (0.5.0)*
+  `.work`, `.daily`, `.weekly`, `.monthly`, `.deposit`, `.withdraw`, `.pay`,
+  `.balance`, `.economyboard`, `.shop`, `.inventory`, `.economy on|off` y el
+  gacha (`.roll`, `.claim`, `.harem`, `.setfav`, `.waifusboard`).
+  Economía **por chat** como en el JS (`g_chat_users`) y rachas **globales**
+  (`g_users`), con los mismos números: `.daily` 20 000 + 5 000/día (tope
+  1 015 000), semanal 40 000 → 185 000, mensual 60 000 → 95 000, `.work`
+  2 000–4 000 cada 3 min. Migración de datos en **docs/ECONOMIA.md**.
+  *Verificación:* `go test ./...` → 150 pruebas (incluye concurrencia real de
+  dinero y de reclamos sobre SQLite).
 - **B4 · Grupos y admin**
   antistatus, warn/kick/promote, mute, horario. (antilink y afk ya entraron en B1.)
 - **B5 · Stickers y media**

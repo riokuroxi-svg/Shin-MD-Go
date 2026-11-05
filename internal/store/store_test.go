@@ -29,7 +29,7 @@ func TestStoreEndToEnd(t *testing.T) {
 		t.Fatalf("cuenta nueva inesperada: %+v", acc)
 	}
 
-	coins, err := db.AddCoins(ctx, jid, 250)
+	coins, err := db.AddGlobalCoins(ctx, jid, 250)
 	if err != nil || coins != 250 {
 		t.Fatalf("AddCoins = %d (%v)", coins, err)
 	}

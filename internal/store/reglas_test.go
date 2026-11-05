@@ -227,7 +227,7 @@ func TestIdentityMergesAccounts(t *testing.T) {
 	)
 
 	// 1) Primero solo se conocía el LID: ahí cayó el .daily.
-	if _, err := db.AddCoins(ctx, lid, 500); err != nil {
+	if _, err := db.AddGlobalCoins(ctx, lid, 500); err != nil {
 		t.Fatal(err)
 	}
 	if claimed, err := db.ClaimDaily(ctx, lid, "2026-11-05"); err != nil || !claimed {
@@ -264,10 +264,10 @@ func TestIdentitySumsBothAccounts(t *testing.T) {
 		pn  = "5215577777777@s.whatsapp.net"
 	)
 
-	if _, err := db.AddCoins(ctx, lid, 100); err != nil {
+	if _, err := db.AddGlobalCoins(ctx, lid, 100); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.AddCoins(ctx, pn, 250); err != nil {
+	if _, err := db.AddGlobalCoins(ctx, pn, 250); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.PutIdentity(ctx, lid, pn); err != nil {

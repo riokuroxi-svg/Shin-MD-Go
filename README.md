@@ -23,7 +23,7 @@
 > [whatsmeow](https://github.com/tulir/whatsmeow).
 > Lo que está aquí **compila, pasa pruebas y arranca de verdad**, pero todavía no tiene
 > los 211 comandos: el bot de JS sigue siendo el bot de producción hasta cerrar los
-> bloques B1–B8. Las versiones se publican cuando el bloque está verificado, no antes.
+> bloques B4–B8. Las versiones se publican cuando el bloque está verificado, no antes.
 
 ## ¿Por qué una versión en Go?
 
@@ -49,7 +49,7 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B0.1 · Caza de bugs** | bloqueo de la cola, calentamiento real, prioridad por comando, `.daily` atómico, `.pin` con media, envoltorios, owners por LID | ✅ **hecho** ([docs/CAMBIOS.md](docs/CAMBIOS.md)) |
 | **B1 · Router real** | hooks `before` (antilink, afk), self-mode, admins de grupo por LID y por teléfono, **capa LID completa** | ✅ **hecho** ([docs/LID.md](docs/LID.md)) |
 | **B2 · Menús y meta** | `.fax` (menú en imagen dibujada en Go), `.info`, `.owner`, `.report`, menú con imagen | ✅ **hecho** |
-| B3 · Economía y perfil | daily, work, banco, ranking, inventario, gacha (con migración de datos) | ⬜ |
+| **B3 · Economía, perfil y gacha** | `.work` `.daily` `.weekly` `.monthly`, banco (`.deposit` `.withdraw`), `.pay`, `.balance`, `.economyboard`, `.shop`, `.inventory`, `.economy on/off` y **gacha** (`.roll` `.claim` `.harem` `.setfav`) con migración de los datos del bot de JS | ✅ **hecho** ([docs/ECONOMIA.md](docs/ECONOMIA.md)) |
 | B4 · Grupos y admin | warns, kick/promote, mute, horario, antistatus (el antilink ya entró en B1) | ⬜ |
 | B5 · Stickers y media | sticker/toimg/tovid con `ffmpeg`, EXIF de sticker en Go | ⬜ |
 | B6 · Descargas | play/yt/tiktok/ig/fb/x (decidir: Go puro o microservicio Node) | ⬜ |
@@ -60,13 +60,13 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 ## Lo que ya funciona (probado, no prometido)
 
-**Comandos cargados hoy: 21 únicos · 69 nombres · 2 hooks.**
+**Comandos cargados hoy: 39 únicos · 135 nombres · 2 hooks.**
 
 | Comando | Qué hace |
 |---|---|
 | `.menu` / `.menucat` | menú con botones nativos y categorías |
 | `.ping` | latencia real de recepción, uptime, estado de conexión y de la cola (con botones) |
-| `.daily` · `.perfil` | economía y perfil (SQLite, migraciones versionadas) |
+| `.work` · `.daily` · `.weekly` · `.monthly` | ganas dinero: 2 000–4 000 por turno y rachas de hasta 1 015 000 |
 | `.botones` | banco de pruebas: quick_reply, cta_url, cta_copy, cta_call |
 | `.lista` | desplegable clásico (`ListMessage`) |
 | `.carrusel` | tarjetas deslizables (`carouselMessage`) |
@@ -82,6 +82,13 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 | `.info` | versión, uptime, conexión, cola, memoria y estado de la base |
 | `.owner` | contacto del dueño con botones (llamar, escribir, repo) |
 | `.report` | el usuario te avisa de algo, con límite anti-spam |
+| `.balance` · `.deposit` · `.withdraw` | cartera, banco y traspaso entre los dos (`all` acepta todo) |
+| `.pay @persona 5000` | pasar dinero a otra persona (sale del banco) |
+| `.economyboard` | ranking del grupo, de 10 en 10 |
+| `.shop` · `.inventory` | tienda (7 objetos) e inventario con salud/stamina/magia |
+| `.economy on\|off` | activa o apaga la economía del grupo (solo admins) |
+| `.roll` · `.claim` · `.harem` · `.setfav` | gacha: sacar un personaje, reclamarlo respondiendo al mensaje, ver tu harem y marcar favorito |
+| `.perfil` | ficha con dinero, nivel y rachas |
 
 ### Botones: catálogo completo
 
@@ -138,6 +145,7 @@ ANTIBAN_PERCHAR_MS=25
 WARMUP_START=20
 WARMUP_END=500
 RICH_AI=0        # 1 = respuestas enriquecidas estilo IA (experimental)
+CHARACTERS_FILE=data/characters.json   # catálogo del gacha (si falta, lo dice)
 ```
 
 ### El menú en imagen (`.fax`)
@@ -185,9 +193,10 @@ Shin-MD-Go/
 │   ├── ui/                   botones, tarjetas, fax (imagen), fuentes
 │   ├── wa/                   cliente, cola anti-ban, parseo, envíos, LID
 │   ├── bot/                  router, hooks, permisos de grupo, owners
-│   └── store/                SQLite puro Go (economía/perfil/settings)
+│   ├── gacha/                catálogo de personajes e ilustraciones
+│   └── store/                SQLite puro Go (economía por chat, rachas, gacha)
 ├── docs/                     MIGRACION.md (plan) · BOTONES.md (catálogo)
-│                             CAMBIOS.md (bugs) · LID.md · SEGURIDAD.md
+│                             ECONOMIA.md · CAMBIOS.md · LID.md · SEGURIDAD.md
 └── Makefile
 ```
 
@@ -196,8 +205,9 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 84 pruebas: botones, carrusel, lista, pin, evento, encuesta,
-                 # parseo y envoltorios, cola anti-ban, SQLite, daily, owners
+go test ./...    # 150 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+                 # parseo y envoltorios, cola anti-ban, SQLite, economía
+                 # (concurrencia de dinero y reclamos), rachas, catálogo y gacha
 go vet ./...     # limpio
 gofmt -l .       # limpio
 ```
@@ -206,6 +216,12 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.5.0** — bloque B3: **economía completa** (`.work`, `.daily`, `.weekly`,
+  `.monthly`, banco, `.pay`, ranking, tienda e inventario) con la economía **por
+  chat** como en el JS y las rachas globales, más el **gacha** (`.roll`,
+  `.claim`, `.harem`, `.setfav`, ranking) y la migración de datos del bot de JS.
+  Todo el dinero se mueve con sentencias condicionales: dos mensajes a la vez no
+  pueden duplicar saldo. Detalle en **[docs/ECONOMIA.md](docs/ECONOMIA.md)**.
 - **0.4.0** — bloque B2: `.fax` (dibujo de imagen sin dependencias), `.info`,
   `.owner`, `.report`, menú con imagen y **revisión de seguridad** (inyección
   de formato, amplificación, topes de CPU y de la base). Ver

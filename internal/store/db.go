@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // driver "sqlite" en Go puro, sin cgo
@@ -17,43 +18,113 @@ import (
 
 type Store struct{ db *sql.DB }
 
-// migraciones: cada una es un escalón. Nunca se edita una ya publicada,
-// se añade otra al final (igual que en Shin-MD JS).
-var migrations = []string{
-	`CREATE TABLE IF NOT EXISTS users (
+// migraciones: cada una es un escalón y puede llevar VARIAS sentencias (una
+// por elemento). Nunca se edita una ya publicada, se añade otra al final
+// (igual que en Shin-MD JS). El número de escalón es la posición + 1, así que
+// añadir al final nunca cambia lo que ya está aplicado.
+var migrations = [][]string{
+	{`CREATE TABLE IF NOT EXISTS users (
 		jid        TEXT PRIMARY KEY,
 		coins      INTEGER NOT NULL DEFAULT 0,
 		bank       INTEGER NOT NULL DEFAULT 0,
 		xp         INTEGER NOT NULL DEFAULT 0,
 		level      INTEGER NOT NULL DEFAULT 1,
 		created_at TEXT NOT NULL
-	);`,
-	`CREATE TABLE IF NOT EXISTS settings (
+	);`},
+	{`CREATE TABLE IF NOT EXISTS settings (
 		jid  TEXT PRIMARY KEY,
 		json TEXT NOT NULL DEFAULT '{}'
-	);`,
-	`CREATE TABLE IF NOT EXISTS warnings (
+	);`},
+	{`CREATE TABLE IF NOT EXISTS warnings (
 		jid TEXT NOT NULL,
 		group_jid TEXT NOT NULL,
 		count INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (jid, group_jid)
-	);`,
+	);`},
 	// 4) .daily tiene que ser "una vez al día" de verdad. Se guarda el día en
 	// una tabla propia (antes se intentaba con una clave por fecha en
 	// settings, que solo crecía y no impedía reclamar dos veces).
-	`CREATE TABLE IF NOT EXISTS daily_claims (
+	{`CREATE TABLE IF NOT EXISTS daily_claims (
 		jid TEXT PRIMARY KEY,
 		day TEXT NOT NULL
-	);`,
+	);`},
 	// 5) Identidades: LID (el identificador interno de WhatsApp) ↔ teléfono.
 	// WhatsApp puede mandar al mismo usuario como 521…@s.whatsapp.net o como
 	// 123…@lid. Sin esta tabla, la misma persona tendría dos cuentas de monedas
 	// según por dónde llegue el mensaje.
-	`CREATE TABLE IF NOT EXISTS identities (
+	{`CREATE TABLE IF NOT EXISTS identities (
 		lid TEXT PRIMARY KEY,
 		pn  TEXT NOT NULL
 	);`,
-	`CREATE INDEX IF NOT EXISTS identities_pn ON identities(pn);`,
+		`CREATE INDEX IF NOT EXISTS identities_pn ON identities(pn);`},
+	// 6) Economía POR CHAT, igual que el bot de JS (tabla g_chat_users): los
+	// mismos usuarios pueden tener saldos distintos en cada grupo, y así la
+	// migración de datos es 1:1 en vez de un invento.
+	{`CREATE TABLE IF NOT EXISTS chat_users (
+		chat_id      TEXT    NOT NULL,
+		user_id      TEXT    NOT NULL,
+		coins        INTEGER NOT NULL DEFAULT 0,
+		bank         INTEGER NOT NULL DEFAULT 0,
+		health       INTEGER NOT NULL DEFAULT 100,
+		stamina      INTEGER NOT NULL DEFAULT 100,
+		magic        INTEGER NOT NULL DEFAULT 100,
+		inventory    TEXT    NOT NULL DEFAULT '{}',
+		last_work    INTEGER NOT NULL DEFAULT 0,
+		last_daily   INTEGER NOT NULL DEFAULT 0,
+		last_weekly  INTEGER NOT NULL DEFAULT 0,
+		last_monthly INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (chat_id, user_id)
+	);`,
+		`CREATE INDEX IF NOT EXISTS chat_users_board ON chat_users(chat_id, coins);`},
+	// 7) Rachas globales (una por persona, no por chat) y campos de perfil
+	// que en el JS viven en g_users.
+	{`ALTER TABLE users ADD COLUMN streak INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE users ADD COLUMN last_daily_global INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE users ADD COLUMN weekly_streak INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE users ADD COLUMN last_weekly_global INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE users ADD COLUMN monthly_streak INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE users ADD COLUMN last_monthly_global INTEGER NOT NULL DEFAULT 0;`},
+	// 8) Marca de "ya se sembró la economía global en chat_users": evita
+	// duplicar monedas cuando alguien escribe por primera vez en un grupo.
+	{`ALTER TABLE users ADD COLUMN economy_seeded INTEGER NOT NULL DEFAULT 0;`},
+	// 9) Gacha: personajes reclamados y rolls pendientes.
+	//
+	// El JS guarda las pertenencias en tres sitios a la vez (tabla
+	// `characters`, tabla `user_characters` y un JSON dentro de
+	// `g_chat_users.characters` que a veces es array y a veces texto) y los
+	// rolls pendientes en el JSON del chat, sin caducidad ni limpieza. Aquí:
+	// una tabla con clave (chat, personaje) — un personaje solo puede tener un
+	// dueño por chat, así que dos reclamos a la vez no pueden ganar los dos — y
+	// otra para los rolls, con su mensaje, su reserva y su caducidad.
+	{`CREATE TABLE IF NOT EXISTS gacha_owned (
+		chat_id    TEXT    NOT NULL,
+		char_id    TEXT    NOT NULL,
+		owner_id   TEXT    NOT NULL,
+		name       TEXT    NOT NULL DEFAULT '',
+		value      INTEGER NOT NULL DEFAULT 0,
+		favorite   INTEGER NOT NULL DEFAULT 0,
+		claimed_at INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (chat_id, char_id)
+	);`,
+		`CREATE INDEX IF NOT EXISTS gacha_owned_harem ON gacha_owned(chat_id, owner_id, value);`,
+		`CREATE TABLE IF NOT EXISTS gacha_rolls (
+		chat_id     TEXT    NOT NULL,
+		message_id  TEXT    NOT NULL,
+		char_id     TEXT    NOT NULL,
+		name        TEXT    NOT NULL DEFAULT '',
+		value       INTEGER NOT NULL DEFAULT 0,
+		roller_id   TEXT    NOT NULL DEFAULT '',
+		reserved_to INTEGER NOT NULL DEFAULT 0,
+		expires_at  INTEGER NOT NULL DEFAULT 0,
+		claimed_by  TEXT,
+		claimed_at  INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (chat_id, message_id)
+	);`,
+		`CREATE INDEX IF NOT EXISTS gacha_rolls_vigencia ON gacha_rolls(expires_at);`},
+	// 10) Contador de rolls por persona y chat: el JS usaba el enfriamiento
+	// `lastRoll`, guardado como número absoluto dentro del JSON del usuario.
+	{`ALTER TABLE chat_users ADD COLUMN last_roll INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_claim INTEGER NOT NULL DEFAULT 0;`},
 }
 
 func Open(path string) (*Store, error) {
@@ -92,9 +163,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, migrations[i]); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("migración %d: %w", i+1, err)
+		for n, sentencia := range migrations[i] {
+			if _, err = tx.ExecContext(ctx, sentencia); err != nil {
+				// Un ALTER sobre una base a la que ya se le añadió la columna
+				// (por ejemplo al restaurar una copia) no debe romper el
+				// arranque: se ignora y se sigue con la sentencia siguiente,
+				// sin deshacer la transacción.
+				if isDuplicateColumn(err) {
+					continue
+				}
+				_ = tx.Rollback()
+				return fmt.Errorf("migración %d, sentencia %d: %w", i+1, n+1, err)
+			}
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO schema_version(version, applied_at) VALUES(?,?)`, i+1, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			_ = tx.Rollback()
@@ -105,6 +185,12 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// isDuplicateColumn detecta el error de SQLite al añadir una columna que ya
+// existe ("duplicate column name: x").
+func isDuplicateColumn(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "duplicate column name")
 }
 
 // Get devuelve la cuenta, creándola si no existe (como el upsert perezoso del JS).
@@ -131,8 +217,11 @@ func (s *Store) Get(ctx context.Context, jid string) (*Account, error) {
 	return acc, err
 }
 
-// AddCoins suma (o resta, con delta negativo) en una sola sentencia.
-func (s *Store) AddCoins(ctx context.Context, jid string, delta int64) (int64, error) {
+// AddGlobalCoins suma (o resta, con delta negativo) en una sola sentencia.
+// Es la cuenta global heredada de la 0.3.0: la economía de verdad vive ahora
+// por chat (ver economia.go) y esto solo se usa para lo que no es dinero de
+// juego (permisos, y la siembra del saldo antiguo).
+func (s *Store) AddGlobalCoins(ctx context.Context, jid string, delta int64) (int64, error) {
 	if _, err := s.Get(ctx, jid); err != nil {
 		return 0, err
 	}
