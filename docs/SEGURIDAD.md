@@ -246,3 +246,26 @@ go test ./internal/store -run 'Charge|AddStat|Steal|Apuestas|Cooldown' -v
 go test ./cmds -run 'Ruleta|Slot|PPT|Mina|Juegos' -v
 grep -rn "Math.random" .        # no debe salir nada: es Go
 ```
+
+## Stickers y medios (0.8.0)
+
+- **Nada sale del servidor.** El `.toimg` del JS subía cada sticker a
+  ezgif.com; aquí la conversión es local con `ffmpeg` y, si no hay, se manda el
+  primer fotograma. Cero peticiones a terceros.
+- **Límites de tamaño y tiempo.** 16 MB por archivo, 3 s de vídeo, 60 s de tope
+  para `ffmpeg` (se cancela) y recorte del nombre del paquete a 64 caracteres.
+- **Sin archivos temporales.** Todo va por memoria y por tuberías: si el proceso
+  muere a mitad, no queda basura en el disco ni un archivo a medio escribir.
+- **Argumentos de lista cerrada.** Las formas y los efectos se buscan en un
+  catálogo; lo que no está, se rechaza mostrando la ayuda. El nombre que escribe
+  el usuario nunca llega a `os/exec` ni a una ruta.
+- **Tope del sticker.** La propia prueba falla si un sticker pasa de 1 MB (el
+  máximo de WhatsApp) o si el WebP resultante no se puede volver a leer.
+
+Verificación rápida:
+
+```bash
+go test ./internal/media -v
+grep -rn "ezgif\|http.Post\|http.Get" internal/media cmds/stickers.go   # vacío
+grep -rn "exec.Command" internal/media                                   # solo ffmpeg
+```

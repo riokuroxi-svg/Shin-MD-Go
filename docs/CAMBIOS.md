@@ -519,3 +519,48 @@ veces sobre valores leídos antes de escribir.
   dentro del SQL.
 
 **Pruebas nuevas en esta ronda:** 21. Total del repo: **191**.
+
+---
+
+# Cambios 0.8.0 — bloque B5 (stickers y medios)
+
+## 30. `.toimg` subía los stickers a ezgif.com
+
+**Síntoma:** convertir un sticker animado fallaba una de cada tres veces, y a
+veces tardaba 20 segundos. En un servidor sin salida a internet, nunca.
+
+**Raíz:** `cmds/utils/toimg.js` no convertía nada: mandaba el archivo por POST a
+`https://ezgif.com/webp-to-mp4` y esperaba la respuesta. La conversión dependía
+de un sitio de terceros — sin avisar, sin límite y mandándole al sitio lo que el
+usuario había mandado al bot.
+
+**Arreglo:** `ffmpeg` local (`libx264`, fondo blanco porque el alfa de un
+sticker queda negro en vídeo, 60 s de tope y cancelación). Y si no hay ffmpeg
+—o esa compilación no sabe leer WebP animado, que pasa con la estática de
+Linux— se manda el **primer fotograma** en PNG con una nota. Los tres caminos
+están probados.
+
+## 31. El sticker salía sin autor (y el EXIF se escribía con una librería de terceros)
+
+**Síntoma:** el sticker llegaba, se veía bien, y al abrir "Ver paquete" salía
+vacío.
+
+**Raíz:** dos cosas. La primera es que el paquete vive en un chunk `EXIF` que hay
+que escribir a mano (22 bytes de cabecera TIFF + JSON con la longitud en el byte
+14). La segunda, la que casi nadie recuerda: el WebP lleva un chunk `VP8X` con
+un byte de banderas donde hay que **marcar el bit 0x08** para declarar que hay
+EXIF dentro. Sin ese bit el archivo es válido, el sticker se ve y WhatsApp
+ignora el paquete.
+
+**Arreglo:** `internal/media/exif.go` escribe y **lee** el paquete (42 líneas,
+sin `node-webpmux`), marca el bit de EXIF y reemplaza el paquete anterior en vez
+de acumular bloques. `TestEXIFIdaYVuelta` hace el camino completo y comprueba
+que el tamaño declarado del RIFF cuadre con el archivo real.
+
+**Extra del mismo bloque:** el WebP que escribimos lleva formato extendido
+(`VP8X` + `VP8L`), y los decodificadores de Go solo aceptan `VP8L` "pelado" —
+nuestro propio `.toimg` no podía leer nuestros propios stickers. Se arregló
+quitando el envoltorio al leer (`desenvolverWebP`), no al escribir: el archivo
+que se manda a WhatsApp conserva su `VP8X`.
+
+**Pruebas nuevas en esta ronda:** 24. Total del repo: **215**.

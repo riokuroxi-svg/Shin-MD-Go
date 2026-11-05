@@ -40,6 +40,8 @@ type Config struct {
 	// y sigue funcionando con el catálogo vacío en vez de romper.
 	GachaFile   string // CHARACTERS_FILE (por defecto data/characters.json)
 	BotName     string // BOT_NAME (por defecto "SHIN-MD")
+	StickerPack string // STICKER_PACK: nombre del paquete en el sticker
+	StickerAuth string // STICKER_AUTHOR: autor que se ve al abrir el sticker
 	MenuImage   bool   // MENU_IMAGE=1: el .menu manda imagen de cabecera
 	OwnerName   string // OWNER_NAME: cómo se llama el dueño en .owner
 	OwnerNumber string // OWNER_NUMBER: número para el botón de llamada
@@ -127,6 +129,8 @@ func LoadFrom(envPath string) Config {
 		EnvFile:     used,
 		GachaFile:   vars.str("CHARACTERS_FILE", filepath.Join(stateDir, "characters.json")),
 		BotName:     vars.str("BOT_NAME", "SHIN-MD"),
+		StickerPack: vars.str("STICKER_PACK", "Shin-MD-Go"),
+		StickerAuth: vars.str("STICKER_AUTHOR", "riokuroxi-svg"),
 		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",
 		OwnerName:   vars.str("OWNER_NAME", "el dueño"),
 		OwnerNumber: vars.str("OWNER_NUMBER", ""),

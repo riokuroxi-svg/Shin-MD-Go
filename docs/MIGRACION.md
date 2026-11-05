@@ -218,9 +218,14 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   minutos en memoria y se perdía al reiniciar).
   *Verificación:* `go test ./...` → 191 pruebas. Detalle en
   **[docs/JUEGOS.md](JUEGOS.md)**.
-- **B5 · Stickers y media**
-  `sticker`/`toimg`/`tovid` con `ffmpeg` por `os/exec` (igual que hoy) y
-  `EXIF` de sticker escrito a mano en Go.
+- **B5 · Stickers y media** ✅ *hecho (0.8.0)*
+  `.sticker` (13 formas y 14 efectos), `.toimg` y `.stickerinfo`. Todo en Go
+  puro salvo el vídeo: `sharp` y `node-webpmux` se sustituyen por
+  `nativewebp` + `x/image` + 42 líneas de EXIF propio. La conversión a vídeo es
+  **local** (el JS subía los stickers a ezgif.com) y, si no hay `ffmpeg`, se
+  manda el primer fotograma en PNG.
+  *Verificación:* `go test ./...` → 215 pruebas. Detalle en
+  **[docs/STICKERS.md](STICKERS.md)**.
 - **B6 · Descargas**
   aquí decides A o B (ver §5). `play`, `yt`, `tiktok`, `ig`, `fb`, `x`.
 - **B7 · Panel web + operación**

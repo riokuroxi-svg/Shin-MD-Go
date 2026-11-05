@@ -61,7 +61,7 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 ## Lo que ya funciona (probado, no prometido)
 
-**Comandos cargados hoy: 81 únicos · 257 nombres · 4 hooks.**
+**Comandos cargados hoy: 84 únicos · 269 nombres · 4 hooks.**
 
 | Comando | Qué hace |
 |---|---|
@@ -104,6 +104,8 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 | `.mazmorra` · `.aventura` · `.ritual` | salidas de riesgo: hacha/espada/tótem, magia si no llevas arma |
 | `.crime` · `.robar` | dinero rápido (40 % de éxito) y robo a otra persona (uno por hora y por víctima) |
 | `.cofre` · `.heal` · `.pocion` | cofre diario, curar salud/stamina con dinero y recuperar magia con poción |
+| `.sticker` (`.s`) | foto, vídeo o sticker → sticker de 512×512, con **13 formas** (`-c` círculo, `-v` corazón…) y **14 efectos** (`-sepia`, `-blur`…) |
+| `.toimg` · `.stickerinfo` | sticker → PNG o MP4 (**sin ezgif**: ffmpeg local) y datos del paquete del sticker |
 
 ### Botones: catálogo completo
 
@@ -222,11 +224,12 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 191 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 215 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
                  # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
                  # advertencias y actividad de grupo, juegos de azar (probabilidad
-                 # de ruleta, tragaperras y casino, y topes de las apuestas)
+                 # de ruleta, tragaperras y casino, y topes de las apuestas),
+                 # stickers (EXIF, formas, filtros y conversión con ffmpeg)
 go vet ./...     # limpio
 gofmt -l .       # limpio
 ```
@@ -235,6 +238,11 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.8.0** — bloque B5: **stickers y medios**. `.sticker` (con formas y
+  efectos), `.toimg` y `.stickerinfo`, todo en Go puro salvo el vídeo. El
+  paquete EXIF se escribe a mano (sin `node-webpmux`) y la conversión a vídeo es
+  **local** (el JS subía el sticker a ezgif.com). Detalle en
+  **[docs/STICKERS.md](docs/STICKERS.md)**.
 - **0.7.0** — bloque B4.1: **juegos de azar y de riesgo**. `.coinflip`,
   `.slot`, `.roulette`, `.casino`, `.ppt` y las salidas que dan dinero
   (`.pescar`, `.cazar`, `.minar`, `.mazmorra`, `.aventura`, `.ritual`,

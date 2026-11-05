@@ -3,8 +3,10 @@ module shin-go
 go 1.26.0
 
 require (
+	github.com/HugoSmits86/nativewebp v1.3.0
 	github.com/mdp/qrterminal/v3 v3.2.1
 	go.mau.fi/whatsmeow v0.0.0-20261013142727-4cf8bc8e0aeb
+	golang.org/x/image v0.24.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.44.3
 )
