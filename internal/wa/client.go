@@ -149,6 +149,15 @@ func (c *Client) LoggedIn() bool { return c.WA.Store.ID != nil }
 // Lo usan los comandos que necesitan saber cómo aparece el bot en un grupo.
 func (c *Client) OwnLID() types.JID { return c.WA.Store.GetLID().ToNonAD() }
 
+// OwnID es el JID del propio bot (vacío si aún no hay sesión). Sirve para no
+// dejar que los comandos actúen sobre el bot: robarle, curarlo, etc.
+func (c *Client) OwnID() types.JID {
+	if c.WA == nil || c.WA.Store.ID == nil {
+		return types.JID{}
+	}
+	return c.WA.Store.ID.ToNonAD()
+}
+
 // Uptime: tiempo desde que arrancó el proceso (lo muestra .ping).
 func (c *Client) Uptime() time.Duration { return time.Since(c.StartedAt) }
 

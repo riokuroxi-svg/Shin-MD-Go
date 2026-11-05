@@ -296,6 +296,166 @@ func (s *Store) Transfer(ctx context.Context, chatID, fromID, toID string, amoun
 	return true, tx.Commit()
 }
 
+// Steal intenta quitar dinero de la CARTERA de una persona y dárselo a otra,
+// en una transacción. Devuelve lo que realmente se movió (puede ser menos de lo
+// pedido si la víctima tenía menos).
+//
+// Es la operación que en el JS era más peligrosa: restaba en JavaScript y
+// escribía "coins - rob" sin comprobar nada, así que la víctima podía quedar en
+// negativo y, con dos robos a la vez, el ladrón cobraba dos veces el mismo
+// dinero. Aquí el descuento es condicional y dentro de la misma transacción que
+// el abono.
+func (s *Store) Steal(ctx context.Context, chatID, fromID, toID string, amount int64) (int64, error) {
+	if amount <= 0 || amount > MaxTransfer || fromID == "" || toID == "" || fromID == toID {
+		return 0, nil
+	}
+	if _, err := s.ChatUser(ctx, chatID, fromID); err != nil {
+		return 0, err
+	}
+	if _, err := s.ChatUser(ctx, chatID, toID); err != nil {
+		return 0, err
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	// Cuánto hay de verdad en la cartera de la víctima (con tope).
+	var disponible int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT coins FROM chat_users WHERE chat_id = ? AND user_id = ?`,
+		chatID, fromID).Scan(&disponible); err != nil {
+		return 0, err
+	}
+	movido := amount
+	if disponible < movido {
+		movido = disponible
+	}
+	if movido <= 0 {
+		return 0, tx.Commit() // no había nada que robar
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE chat_users SET coins = coins - ?
+		 WHERE chat_id = ? AND user_id = ? AND coins >= ?`,
+		movido, chatID, fromID, movido)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if n == 0 {
+		return 0, tx.Commit() // alguien se lo gastó en el medio
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE chat_users SET coins = MIN(coins + ?, ?)
+		 WHERE chat_id = ? AND user_id = ?`, movido, MaxMoney, chatID, toID); err != nil {
+		return 0, err
+	}
+	return movido, tx.Commit()
+}
+
+// Charge cobra una multa: primero de la cartera y, si no alcanza, del banco.
+// Devuelve lo que realmente se pudo cobrar (0 si no había nada).
+//
+// Sirve para las pérdidas de crime/steal/aventura, que en el JS se calculaban
+// en JavaScript sobre dos lecturas distintas y podían dejar el banco en
+// negativo. Aquí el cobro se hace con una condición de igualdad sobre el saldo
+// leído: si alguien movió dinero en medio, se reintenta y, si no, se cobra lo
+// que se pueda.
+func (s *Store) Charge(ctx context.Context, chatID, userID string, amount int64) (int64, error) {
+	if amount <= 0 || amount > MaxMoney {
+		return 0, nil
+	}
+	if _, err := s.ChatUser(ctx, chatID, userID); err != nil {
+		return 0, err
+	}
+
+	for intento := 0; intento < 3; intento++ {
+		var coins, bank int64
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT coins, bank FROM chat_users WHERE chat_id = ? AND user_id = ?`,
+			chatID, userID).Scan(&coins, &bank); err != nil {
+			return 0, err
+		}
+		pagado := amount
+		if total := coins + bank; total < pagado {
+			pagado = total
+		}
+		if pagado <= 0 {
+			return 0, nil
+		}
+
+		// Las dos expresiones usan los valores VIEJOS de la fila, así que el
+		// reparto cartera/banco sale bien en una sola sentencia.
+		res, err := s.db.ExecContext(ctx, `
+			UPDATE chat_users
+			   SET coins = MAX(coins - ?, 0),
+			       bank  = MAX(bank - MAX(? - coins, 0), 0)
+			 WHERE chat_id = ? AND user_id = ? AND coins = ? AND bank = ?`,
+			pagado, pagado, chatID, userID, coins, bank)
+		if err != nil {
+			return 0, err
+		}
+		if n, err := res.RowsAffected(); err == nil && n > 0 {
+			return pagado, nil
+		}
+	}
+	return 0, nil
+}
+
+// AddStat suma (o resta con delta negativo) a salud, stamina o magia, y
+// devuelve el valor resultante. El recorte a 0..MaxStat lo hace SQL: en el JS
+// había sitios donde la resta se hacía a mano y la salud acababa en -7.
+func (s *Store) AddStat(ctx context.Context, chatID, userID, stat string, delta int64) (int64, error) {
+	var col string
+	switch stat {
+	case "health", "stamina", "magic":
+		col = stat
+	default:
+		return 0, fmt.Errorf("estadística inválida: %q", stat)
+	}
+	if _, err := s.ChatUser(ctx, chatID, userID); err != nil {
+		return 0, err
+	}
+	if delta > MaxStat {
+		delta = MaxStat
+	}
+	if delta < -MaxStat {
+		delta = -MaxStat
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE chat_users SET `+col+` = MIN(MAX(`+col+` + ?, 0), ?)
+		  WHERE chat_id = ? AND user_id = ?`,
+		delta, MaxStat, chatID, userID); err != nil {
+		return 0, err
+	}
+	var v int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT `+col+` FROM chat_users WHERE chat_id = ? AND user_id = ?`,
+		chatID, userID).Scan(&v)
+	return v, err
+}
+
+// ReleaseCooldown devuelve el enfriamiento a cero. Se usa cuando se reservó el
+// turno y la jugada no llegó a ocurrir (por ejemplo, el saldo no alcanzaba
+// porque otra apuesta se lo comió en el mismo segundo): sin esto, el jugador
+// pagaría la espera de una partida que nunca jugó.
+func (s *Store) ReleaseCooldown(ctx context.Context, chatID, userID, column string) error {
+	if !cooldownColumns[column] {
+		return fmt.Errorf("columna de enfriamiento inválida: %q", column)
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE chat_users SET `+column+` = 0 WHERE chat_id = ? AND user_id = ?`,
+		chatID, userID)
+	return err
+}
+
 // ─── enfriamientos (atómico) ────────────────────────────────────────────────
 
 // cooldownColumns: las únicas columnas que se pueden tocar. Se usa un mapa y
@@ -303,6 +463,11 @@ func (s *Store) Transfer(ctx context.Context, chatID, fromID, toID string, amoun
 var cooldownColumns = map[string]bool{
 	"last_work": true, "last_daily": true, "last_weekly": true, "last_monthly": true,
 	"last_roll": true, "last_claim": true,
+	"last_casino": true, "last_coinflip": true, "last_roulette": true,
+	"last_slot": true, "last_ppt": true, "last_crime": true, "last_steal": true,
+	"last_fish": true, "last_hunt": true, "last_mine": true,
+	"last_dungeon": true, "last_adventure": true, "last_coffer": true,
+	"last_invoke": true, "last_robbed": true,
 }
 
 // ClaimCooldown intenta reservar el turno de un comando con enfriamiento.

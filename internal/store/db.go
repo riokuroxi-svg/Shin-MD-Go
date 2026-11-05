@@ -121,6 +121,27 @@ var migrations = [][]string{
 		PRIMARY KEY (chat_id, message_id)
 	);`,
 		`CREATE INDEX IF NOT EXISTS gacha_rolls_vigencia ON gacha_rolls(expires_at);`},
+	// 12) Juegos de azar (B4.1): enfriamientos propios. Van aparte de los de la
+	// economía para que un `.work` no bloquee un `.slot` ni al revés.
+	{`ALTER TABLE chat_users ADD COLUMN last_casino INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_dungeon INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_adventure INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_coffer INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_invoke INTEGER NOT NULL DEFAULT 0;`,
+		// Cuándo robaron a esta persona por última vez. En el JS el límite era
+		// "solo si lleva 1 hora sin escribir", y eso no se guardaba en ningún
+		// sitio: aquí se limita por víctima, que es lo que de verdad se quería
+		// evitar (que dos personas vacíen a la misma en cadena).
+		`ALTER TABLE chat_users ADD COLUMN last_robbed INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_coinflip INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_roulette INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_slot INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_ppt INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_crime INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_steal INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_fish INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_hunt INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE chat_users ADD COLUMN last_mine INTEGER NOT NULL DEFAULT 0;`},
 	// 11) Grupos y admin: advertencias como filas (en el JS eran un array JSON
 	// dentro del usuario) y conteo de mensajes por día (en el JS, un objeto que
 	// crecía dentro de cada usuario y se reescribía entero en cada mensaje).

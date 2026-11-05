@@ -61,7 +61,7 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 ## Lo que ya funciona (probado, no prometido)
 
-**Comandos cargados hoy: 65 únicos · 206 nombres · 4 hooks.**
+**Comandos cargados hoy: 81 únicos · 257 nombres · 4 hooks.**
 
 | Comando | Qué hace |
 |---|---|
@@ -99,6 +99,11 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 | `.antistatus` | borra los estados compartidos en el grupo y advierte |
 | `.count` · `.topcount` · `.topinactive` | actividad del grupo (contador propio, no el JSON del JS) |
 | `.bot on\|off` | apaga el bot en ese grupo |
+| `.coinflip` · `.slot` · `.roulette` · `.casino` · `.ppt` | juegos de apuesta (cara o cruz, tragaperras, ruleta europea, dados y piedra-papel-tijera) |
+| `.pescar` · `.cazar` · `.minar` | salidas con herramienta: piden caña, arco o pico y gastan stamina |
+| `.mazmorra` · `.aventura` · `.ritual` | salidas de riesgo: hacha/espada/tótem, magia si no llevas arma |
+| `.crime` · `.robar` | dinero rápido (40 % de éxito) y robo a otra persona (uno por hora y por víctima) |
+| `.cofre` · `.heal` · `.pocion` | cofre diario, curar salud/stamina con dinero y recuperar magia con poción |
 
 ### Botones: catálogo completo
 
@@ -217,10 +222,11 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 170 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 191 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
                  # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
-                 # advertencias y actividad de grupo
+                 # advertencias y actividad de grupo, juegos de azar (probabilidad
+                 # de ruleta, tragaperras y casino, y topes de las apuestas)
 go vet ./...     # limpio
 gofmt -l .       # limpio
 ```
@@ -229,6 +235,12 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.7.0** — bloque B4.1: **juegos de azar y de riesgo**. `.coinflip`,
+  `.slot`, `.roulette`, `.casino`, `.ppt` y las salidas que dan dinero
+  (`.pescar`, `.cazar`, `.minar`, `.mazmorra`, `.aventura`, `.ritual`,
+  `.crime`, `.robar`, `.cofre`) más `.heal`/`.pocion`. Las probabilidades se
+  recalcularon: la ruleta del JS acertaba el 24 % pagando ×5 y el casino tiraba
+  dados cargados contra el jugador. Detalle en **[docs/JUEGOS.md](docs/JUEGOS.md)**.
 - **0.6.0** — bloque B4: **administración de grupos**. Advertencias con motivo,
   autor y fecha (y expulsión automática al llegar al límite), `.kick`,
   `.promote`/`.demote`, abrir/cerrar, enlace y su restablecimiento, menciones

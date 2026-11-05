@@ -443,3 +443,79 @@ creador del grupo, un admin, el dueño del bot o el propio bot (ver
 **docs/GRUPOS.md §2 y §3**).
 
 **Pruebas nuevas en esta ronda:** 20. Total del repo: **170**.
+
+---
+
+# Cambios 0.7.0 — bloque B4.1 (juegos de azar)
+
+Los tres fallos de esta tanda son de **probabilidad**, no de código: el juego
+contestaba perfectamente, pero pagaba más de lo que cobraba y eso se comía la
+economía del grupo en silencio.
+
+## 27. La ruleta pagaba ×5 con un 24 % de acierto
+
+**Síntoma:** `.rt 1000 verde` acertaba muchísimo más de lo que debería y el
+saldo del grupo subía sin parar. Con `.rt all verde` se podía fabricar dinero
+en serie.
+
+**Raíz:** `cmds/economy/roulette.js` tiraba un número del 0 al 36 y pintaba de
+verde los **9 primeros**:
+
+```js
+const random = Math.floor(Math.random() * 37)
+if (random <= 8) { /* verde */ paga = amount * 5 }
+```
+
+Nueve casillas de 37 son el 24 %; pagando ×5, cada moneda apostada devolvía
+1.22. No era una ruleta: era una fuente de dinero.
+
+**Arreglo:** la rueda europea real —**18 rojos, 18 negros y el 0 verde**— con
+la disposición auténtica de los números. Rojo/negro pagan ×2 (devolución 97.3 %)
+y el número exacto ×36. `TestRuletaColoresDeLaRueda` cuenta las casillas
+(18/18/1) y `TestRuletaDevolucion` simula 200,000 tiradas y falla si la
+devolución se sale del 93–100 %.
+
+## 28. El casino tiraba dados cargados contra el jugador
+
+**Síntoma:** `.apostar` perdía casi siempre. La gente dejó de usarlo y no sabía
+por qué.
+
+**Raíz:** dos rangos distintos para el mismo duelo:
+
+```js
+let Aku = Math.floor(Math.random() * 101)  // el jugador: 0–100
+let Kamu = Math.floor(Math.random() * 55)  // el bot:     0–54
+```
+
+El bot ganaba el **85 %** de las tiradas y el mensaje lo presentaba como un
+duelo justo.
+
+**Arreglo:** los dos tiran 1–100. El empate se queda la casa y por eso el premio
+es ×1.9 en vez de ×2 (devolución ≈ 94 %), que es exactamente lo que un casino
+hace de verdad. Y ahora se explica en `docs/JUEGOS.md`.
+
+## 29. Las pérdidas y las multas escribían saldos negativos
+
+**Síntoma:** bancos en −3,000; salud en −7; stamina en 118.
+
+**Raíz:** todas las actividades (`crime`, `rob`, `pescar`, `cazar`, `minar`,
+`dungeon`, `adventure`) restaban así:
+
+```js
+if (user.coins >= cantidad) user.coins -= cantidad
+else { const resto = cantidad - user.coins; user.coins = 0; user.bank -= resto }
+```
+
+Nada comprobaba que el banco tuviera ese resto, y la salud/stamina se restaban a
+mano sin recortar. Con dos comandos a la vez, la misma resta se aplicaba dos
+veces sobre valores leídos antes de escribir.
+
+**Arreglo:** dos operaciones nuevas en la capa de datos:
+
+- `Charge()` cobra primero de la cartera y luego del banco, **en una sola
+  sentencia** con `MAX(…, 0)`, y devuelve lo que realmente pudo cobrar (que es
+  lo que se le dice al jugador).
+- `AddStat()` suma o resta salud/stamina/magia recortando siempre a `0..100`
+  dentro del SQL.
+
+**Pruebas nuevas en esta ronda:** 21. Total del repo: **191**.

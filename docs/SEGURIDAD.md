@@ -213,3 +213,36 @@ go test ./internal/store -run 'Warn|Actividad|Ajustes' -v
 go test ./cmds -run 'Grupo|SameUser|Plantilla' -v
 grep -rn "KickLote" cmds/      # no debe salir nada: ningún comando lo usa
 ```
+
+## Juegos de azar y riesgo (0.7.0)
+
+- **El dinero no se puede duplicar apostando.** El cobro es un `UPDATE … WHERE
+  coins >= ?` y el pago una suma sobre el saldo actual; no hay ninguna lectura
+  seguida de escritura (`docs/JUEGOS.md §1`). 50 apuestas simultáneas de 500
+  sobre un saldo de 10,000 cobran 20, ni una más (`TestApuestasSimultaneasNoRompenSaldo`).
+- **Una apuesta por persona y juego a la vez.** El enfriamiento se reserva en la
+  base con condición dentro del `UPDATE` (`ClaimCooldown`): de 20 intentos
+  simultáneos pasa exactamente uno (`TestCooldownDeJuegoEsUnico`).
+- **Ninguna pérdida puede dejar saldo negativo.** `Charge()` cobra cartera y
+  banco en una sentencia con `MAX(…, 0)` y devuelve lo que de verdad cobró, que
+  es lo que se le dice al jugador.
+- **Salud, stamina y magia no salen de `0..100`** (`AddStat`).
+- **Las probabilidades están escritas y probadas.** La ruleta es 18/18/1 y
+  devuelve 97 % (`TestRuletaDevolucion`); la tragaperras devuelve 86 %
+  (`TestSlotDevolucion`). Si alguien toca los números, la prueba falla; no se
+  puede convertir un juego en una fábrica de dinero sin que salte.
+- **Robar es una transacción entre dos personas.** `Steal()` descuenta
+  condicionalmente y abona en la misma transacción: con 4 robos a la vez sobre
+  10,000 no salen más de 10,000 (`TestStealConcurrenteNoDuplica`). No se puede
+  robar a uno mismo ni al bot, y cada víctima tiene una hora de tregua.
+- **Nada de partidas pendientes en memoria.** El `.mine` del JS dejaba la
+  partida abierta 3 minutos (y se perdía al reiniciar); aquí todo se resuelve en
+  el mismo mensaje.
+
+Verificación rápida:
+
+```bash
+go test ./internal/store -run 'Charge|AddStat|Steal|Apuestas|Cooldown' -v
+go test ./cmds -run 'Ruleta|Slot|PPT|Mina|Juegos' -v
+grep -rn "Math.random" .        # no debe salir nada: es Go
+```

@@ -1,6 +1,6 @@
 # Economía · bloque B3
 
-_Cómo funciona el dinero en Shin-MD-Go · 5-nov-2026 · versión 0.5.0_
+_Cómo funciona el dinero en Shin-MD-Go · 5-nov-2026 · versión 0.7.0_
 
 Este documento explica **qué hace cada comando, con qué números y dónde se
 guarda**. Los números son los mismos del bot de JS a propósito: la gente ya
@@ -267,16 +267,18 @@ API dentro del código** (el JS llevaba una escrita a mano), con 8 s de espera y
 4 MB de tope. Si no hay imagen, el personaje se anuncia igual y se puede
 reclamar.
 
-## 7. Lo que queda para después
+## 7. Los juegos de azar
 
-Los comandos de azar y de riesgo del JS (`casino`, `coinflip`, `roulette`,
-`slot`, `ppt`, `steal`, `crime`, `fish`, `mine`, `hunt`, `dungeon`, `adventure`,
-`coffer`) entran en **B4** sobre estas mismas tablas: ya tienen `Spend`,
-`AddCoins`, `ClaimCooldown` e inventario validado, así que cada uno es una regla
-y un mensaje, no una capa de datos nueva. Lo mismo `.marry` y el resto de
-`profile/*`, que usan el harem que ya está funcionando.
+Los comandos de riesgo (`coinflip`, `slot`, `roulette`, `casino`, `ppt`,
+`crime`, `robar`, `pescar`, `cazar`, `minar`, `mazmorra`, `aventura`, `ritual`,
+`cofre`, `heal` y `pocion`) están en **B4.1** y se apoyan en esta misma capa:
+`Spend`, `AddCoins`, `ClaimCooldown`, `Charge`, `Steal`, `AddStat` y el
+inventario validado. No hay tablas nuevas de dinero, solo columnas de espera
+(migración 12).
 
----
+Sus números, sus probabilidades y las tres trampas que traía el JS (ruleta
+pagando de más, casino con dados cargados y tragaperras con devolución > 100 %)
+están en **[docs/JUEGOS.md](JUEGOS.md)**.
 
 <div align="center">
 

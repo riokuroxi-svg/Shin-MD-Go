@@ -207,9 +207,17 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   el porqué en **docs/GRUPOS.md §3**.
   *Verificación:* `go test ./...` → 170 pruebas. Los comandos que tocan WhatsApp
   se probaron en un grupo real antes de subirlos.
-- **B4.1 · Juegos de azar**
-  casino, coinflip, roulette, slot, ppt, steal, crime, fish, mine, hunt, dungeon,
-  adventure, coffer (sobre la capa de economía de B3).
+- **B4.1 · Juegos de azar** ✅ *hecho (0.7.0)*
+  `.coinflip` `.slot` `.roulette` `.casino` `.ppt` y las salidas de riesgo
+  `.pescar` `.cazar` `.minar` `.mazmorra` `.aventura` `.ritual` `.crime`
+  `.robar` `.cofre`, más `.heal` y `.pocion` (sobre la capa de economía de B3,
+  sin tablas nuevas: solo columnas de espera, migración 12).
+  Las probabilidades se recalcularon porque las del JS estaban rotas: la ruleta
+  acertaba el 24 % pagando ×5 y el casino tiraba dados de 55 caras contra los
+  101 del jugador. No se portó la partida "pendiente" de `.mine` (vivía 3
+  minutos en memoria y se perdía al reiniciar).
+  *Verificación:* `go test ./...` → 191 pruebas. Detalle en
+  **[docs/JUEGOS.md](JUEGOS.md)**.
 - **B5 · Stickers y media**
   `sticker`/`toimg`/`tovid` con `ffmpeg` por `os/exec` (igual que hoy) y
   `EXIF` de sticker escrito a mano en Go.
