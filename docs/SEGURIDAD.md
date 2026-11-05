@@ -186,3 +186,30 @@ Verificación rápida:
 go test ./internal/gacha -v
 grep -rn "api_key\|apikey" .   # no debe salir nada
 ```
+
+## Grupos y administración (0.6.0)
+
+- **Las operaciones destructivas no se automatizan.** `.kick all`, `.kick num` y
+  `.kick inactive` listan, no expulsan (docs/GRUPOS.md §3). El bucle de
+  expulsiones con pausa existe en `wa.KickLote` pero ningún comando lo llama.
+- **Nadie se expulsa solo.** Se bloquea antes de llamar a WhatsApp: creador del
+  grupo, administradores, el dueño del bot (`OWNERS`) y el propio bot. Sin
+  información del grupo, no se actúa.
+- **Menciones acotadas.** `tagall`/`hidetag` mandan como mucho 50 menciones
+  (`wa.MaxMentions`) y las plantillas de bienvenida se recortan a 500/900
+  caracteres: un texto enorme no se convierte en un mensaje enorme.
+- **`antistatus` no acusa sin prueba.** Si el borrado falla, no se pone la
+  advertencia (`cmds/grupos_avisos.go`).
+- **Los borrados pasan por la cola anti-ban.** Antes `DeleteMessage` enviaba por
+  fuera de la cola: justo en el caso de borrados en ráfaga, que es donde más se
+  nota un patrón de bot.
+- **`.bot off`** silencia el bot en ese grupo (comandos, hooks y contador), y el
+  dueño siempre puede volver a encenderlo.
+
+Verificación rápida:
+
+```bash
+go test ./internal/store -run 'Warn|Actividad|Ajustes' -v
+go test ./cmds -run 'Grupo|SameUser|Plantilla' -v
+grep -rn "KickLote" cmds/      # no debe salir nada: ningún comando lo usa
+```

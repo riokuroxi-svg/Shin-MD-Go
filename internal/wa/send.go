@@ -146,13 +146,19 @@ func (c *Client) SendRich(ctx context.Context, chat types.JID, msg *waE2E.Messag
 // DeleteMessage borra un mensaje para todos (revoke). El bot necesita ser
 // admin del grupo Y el mensaje tiene que ser de otra persona: WhatsApp no deja
 // revocar los mensajes propios del bot por esta vía… pero sí los ajenos.
+//
+// Pasa por la cola anti-ban: un borrado es un envío más, y antes salía por
+// fuera de la cola (sin espaciado) justo en los casos en los que el bot borra
+// en ráfaga, que es donde más se nota un patrón de abuso.
 func (c *Client) DeleteMessage(ctx context.Context, chat, sender types.JID, id types.MessageID) error {
 	if id == "" {
 		return nil
 	}
 	msg := c.WA.BuildRevoke(chat, sender, id)
-	_, err := c.WA.SendMessage(ctx, chat, msg)
-	return err
+	return c.Queue.Do(ctx, 0, false, func() error {
+		_, err := c.WA.SendMessage(ctx, chat, msg)
+		return err
+	})
 }
 
 // uploadImage sube una imagen y devuelve el ImageMessage listo para encabezar

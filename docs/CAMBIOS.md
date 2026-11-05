@@ -391,3 +391,55 @@ espera y 4 MB de tope; si no hay imagen, el personaje se anuncia igual
 (`internal/gacha/catalogo_test.go`, `imagen_test.go`).
 
 **Pruebas nuevas en esta ronda:** 66. Total del repo: **150**.
+
+# Cambios 0.6.0 — bloque B4 (grupos y admin)
+
+## 23. Las advertencias se perdían
+
+**Raíz:** `chat_users.warnings` era un array JSON dentro del usuario. Para poner
+una advertencia había que leerlo entero, añadir al principio y reescribirlo. Dos
+`.warn` a la vez (dos admins, o un admin apurado) leían la misma lista y el
+segundo borraba el trabajo del primero. Y si el JSON se corrompía, el `catch`
+dejaba al usuario **sin advertencias para siempre**, sin ningún aviso.
+
+**Arreglo:** tabla `group_warns` (una fila por advertencia, con motivo, autor y
+fecha). Borrar la #3 es un `DELETE`, contar es un `COUNT(*)`, y 20 `.warn`
+simultáneos se guardan los 20 (`TestWarnConcurrente`).
+
+## 24. El conteo de mensajes reescribía un JSON en cada mensaje
+
+**Raíz:** `chat_users.stats = { "2026-11-05": { msgs: 42 }, … }`. En **cada
+mensaje** del grupo se leía ese objeto completo y se volvía a escribir. En un
+grupo con un año de historia son cientos de claves leídas y escritas miles de
+veces al día, y con mensajes simultáneos se perdía la cuenta.
+
+**Arreglo:** `chat_activity(chat_id, user_id, day, msgs)` con
+`INSERT … ON CONFLICT DO UPDATE SET msgs = msgs + 1`: una sentencia, sin lectura
+previa. Probado con 50 mensajes en paralelo (`TestActividadConcurrente`).
+
+## 25. antistatus borraba el mensaje de otra persona
+
+**Raíz:** al borrar un estado compartido, el JS elegía a quién borrar con una
+cadena de condicionales sobre campos que a veces venían vacíos y caía en
+`msg.sender` como último recurso. En una cita de un estado, el borrado podía ir
+a parar al mensaje equivocado (o a nadie).
+
+**Arreglo:** solo se borra lo que se identifica con certeza (el mensaje que **es**
+un estado de grupo, o el citado con su autor real tomado de `contextInfo`), el
+borrado pasa por la cola anti-ban y **si el borrado falla no se advierte**: sin
+prueba, no hay acusación.
+
+## 26. `.kick all`, `.kick num` y `.kick inactive` vaciaban grupos
+
+**Raíz:** tres modos que expulsaban en bucle (con 3 s de pausa) a todos los que
+no fueran admin, a todos los de un prefijo de país, o a los que llevaban 30 días
+callados. Un `.kick all` mal escrito vacía un grupo de 500 personas, y esas
+personas no vuelven: no hay "deshacer".
+
+**Arreglo:** esos modos **solo listan** a quién afectarían, con su número y un
+aviso explícito de que no se ha expulsado a nadie. La expulsión individual exige
+nombrar a la persona. Además, antes de tocar a nadie se comprueba que no sea el
+creador del grupo, un admin, el dueño del bot o el propio bot (ver
+**docs/GRUPOS.md §2 y §3**).
+
+**Pruebas nuevas en esta ronda:** 20. Total del repo: **170**.

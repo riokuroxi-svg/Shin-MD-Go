@@ -46,7 +46,8 @@ type Client struct {
 	// context.Background() y un cierre limpio no cancelaba nada.
 	baseCtx context.Context
 
-	onMessage func(ctx context.Context, evt *events.Message)
+	onMessage   func(ctx context.Context, evt *events.Message)
+	onGroupInfo func(ctx context.Context, evt *events.GroupInfo)
 }
 
 // New abre la base de sesión y construye el cliente. No se conecta todavía.
@@ -111,6 +112,13 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityS
 			if c.onMessage != nil {
 				c.onMessage(c.baseCtx, evt)
 			}
+		case *events.GroupInfo:
+			// Entradas, salidas y cambios de rol: los usa la bienvenida y la
+			// despedida, y sirven para tirar la caché del grupo en cuanto
+			// cambia algo que afecta a los permisos.
+			if c.onGroupInfo != nil {
+				c.onGroupInfo(c.baseCtx, evt)
+			}
 		}
 	})
 
@@ -130,6 +138,10 @@ func secureSessionFiles(path string, log *xlog.Logger) {
 }
 
 func (c *Client) OnMessage(fn func(ctx context.Context, evt *events.Message)) { c.onMessage = fn }
+
+// OnGroupInfo registra el manejador de eventos de grupo (entradas, salidas,
+// ascensos, cambios de nombre…). Solo hay uno: main() pone el del bot.
+func (c *Client) OnGroupInfo(fn func(ctx context.Context, evt *events.GroupInfo)) { c.onGroupInfo = fn }
 
 func (c *Client) LoggedIn() bool { return c.WA.Store.ID != nil }
 

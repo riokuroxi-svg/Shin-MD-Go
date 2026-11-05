@@ -61,6 +61,17 @@ func NormalizeOwners(in []string) []string {
 
 // IsOwner compara el número del remitente (y su alternativo, el teléfono
 // cuando el chat va por LID) contra la lista de owners ya normalizada.
+// IsBotOwner comprueba un JID contra la lista de dueños del proceso (la que
+// cargó main). Es la misma comprobación que hace el router, expuesta para los
+// comandos que tienen que proteger al dueño (nadie puede expulsarlo ni
+// degradarlo).
+func IsBotOwner(jid types.JID) bool {
+	if activeRouter == nil || jid.IsEmpty() {
+		return false
+	}
+	return IsOwner(jid, types.EmptyJID, activeRouter.owner)
+}
+
 func IsOwner(jid, alt types.JID, owners []string) bool {
 	if len(owners) == 0 {
 		return false

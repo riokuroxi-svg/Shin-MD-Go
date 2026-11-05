@@ -190,7 +190,7 @@ func init() {
 const repoURL = "https://github.com/riokuroxi-svg/Shin-MD-Go"
 
 // version la rellena main con -ldflags; aquí vale la de por defecto.
-var version = "0.5.0"
+var version = "0.6.0"
 
 // SetVersion permite que main.go publique la versión real en .info.
 func SetVersion(v string) { version = v }

@@ -196,8 +196,20 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   2 000–4 000 cada 3 min. Migración de datos en **docs/ECONOMIA.md**.
   *Verificación:* `go test ./...` → 150 pruebas (incluye concurrencia real de
   dinero y de reclamos sobre SQLite).
-- **B4 · Grupos y admin**
-  antistatus, warn/kick/promote, mute, horario. (antilink y afk ya entraron en B1.)
+- **B4 · Grupos y admin** ✅ *hecho (0.6.0)*
+  `.warn` `.warns` `.delwarn` `.setwarnlimit` (con expulsión automática),
+  `.kick` `.promote` `.demote`, `.open` `.close` `.link` `.revoke`,
+  `.tagall` `.hidetag`, `.gp` `.setgpname` `.setgpdesc` `.setgpbanner`,
+  `.welcome` `.goodbye` `.setwelcome` `.setgoodbye` (+ oyente de eventos de
+  grupo), `.antistatus` (+ hook), `.count` `.topcount` `.topinactive`
+  (+ contador de actividad) y `.bot on|off`.
+  Las expulsiones en lote del JS (`kick all|num|inactive`) **solo listan**: ver
+  el porqué en **docs/GRUPOS.md §3**.
+  *Verificación:* `go test ./...` → 170 pruebas. Los comandos que tocan WhatsApp
+  se probaron en un grupo real antes de subirlos.
+- **B4.1 · Juegos de azar**
+  casino, coinflip, roulette, slot, ppt, steal, crime, fish, mine, hunt, dungeon,
+  adventure, coffer (sobre la capa de economía de B3).
 - **B5 · Stickers y media**
   `sticker`/`toimg`/`tovid` con `ffmpeg` por `os/exec` (igual que hoy) y
   `EXIF` de sticker escrito a mano en Go.

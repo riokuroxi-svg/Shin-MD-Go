@@ -49,6 +49,7 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B0.1 · Caza de bugs** | bloqueo de la cola, calentamiento real, prioridad por comando, `.daily` atómico, `.pin` con media, envoltorios, owners por LID | ✅ **hecho** ([docs/CAMBIOS.md](docs/CAMBIOS.md)) |
 | **B1 · Router real** | hooks `before` (antilink, afk), self-mode, admins de grupo por LID y por teléfono, **capa LID completa** | ✅ **hecho** ([docs/LID.md](docs/LID.md)) |
 | **B2 · Menús y meta** | `.fax` (menú en imagen dibujada en Go), `.info`, `.owner`, `.report`, menú con imagen | ✅ **hecho** |
+| **B4 · Grupos y admin** | warns con límite y expulsión automática, `.kick` `.promote` `.demote`, abrir/cerrar, enlace y su restablecimiento, `.tagall`/`.hidetag`, info y datos del grupo, bienvenida y despedida, `.antistatus`, conteo de actividad, `.bot on/off` | ✅ **hecho** ([docs/GRUPOS.md](docs/GRUPOS.md)) |
 | **B3 · Economía, perfil y gacha** | `.work` `.daily` `.weekly` `.monthly`, banco (`.deposit` `.withdraw`), `.pay`, `.balance`, `.economyboard`, `.shop`, `.inventory`, `.economy on/off` y **gacha** (`.roll` `.claim` `.harem` `.setfav`) con migración de los datos del bot de JS | ✅ **hecho** ([docs/ECONOMIA.md](docs/ECONOMIA.md)) |
 | B4 · Grupos y admin | warns, kick/promote, mute, horario, antistatus (el antilink ya entró en B1) | ⬜ |
 | B5 · Stickers y media | sticker/toimg/tovid con `ffmpeg`, EXIF de sticker en Go | ⬜ |
@@ -60,7 +61,7 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 ## Lo que ya funciona (probado, no prometido)
 
-**Comandos cargados hoy: 39 únicos · 135 nombres · 2 hooks.**
+**Comandos cargados hoy: 65 únicos · 206 nombres · 4 hooks.**
 
 | Comando | Qué hace |
 |---|---|
@@ -89,6 +90,15 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 | `.economy on\|off` | activa o apaga la economía del grupo (solo admins) |
 | `.roll` · `.claim` · `.harem` · `.setfav` | gacha: sacar un personaje, reclamarlo respondiendo al mensaje, ver tu harem y marcar favorito |
 | `.perfil` | ficha con dinero, nivel y rachas |
+| `.warn` · `.warns` · `.delwarn` · `.setwarnlimit` | advertencias con motivo, autor y fecha; al llegar al límite, expulsa |
+| `.kick` · `.promote` · `.demote` | expulsar y cambiar roles (con protecciones: ni el bot, ni el creador, ni los admins) |
+| `.open` · `.close` · `.link` · `.revoke` | abrir, cerrar, ver el enlace y restablecerlo |
+| `.tagall` · `.hidetag` | mencionar a todos, con o sin listar los números |
+| `.gp` · `.setgpname` · `.setgpdesc` · `.setgpbanner` | información y datos del grupo |
+| `.welcome` · `.goodbye` · `.setwelcome` · `.setgoodbye` | avisos de entrada y salida con marcadores `@user` `#grupo` `#miembros` |
+| `.antistatus` | borra los estados compartidos en el grupo y advierte |
+| `.count` · `.topcount` · `.topinactive` | actividad del grupo (contador propio, no el JSON del JS) |
+| `.bot on\|off` | apaga el bot en ese grupo |
 
 ### Botones: catálogo completo
 
@@ -194,9 +204,11 @@ Shin-MD-Go/
 │   ├── wa/                   cliente, cola anti-ban, parseo, envíos, LID
 │   ├── bot/                  router, hooks, permisos de grupo, owners
 │   ├── gacha/                catálogo de personajes e ilustraciones
-│   └── store/                SQLite puro Go (economía por chat, rachas, gacha)
+│   └── store/                SQLite puro Go (economía por chat, rachas, gacha,
+│                             advertencias y actividad de grupo)
 ├── docs/                     MIGRACION.md (plan) · BOTONES.md (catálogo)
-│                             ECONOMIA.md · CAMBIOS.md · LID.md · SEGURIDAD.md
+│                             ECONOMIA.md · GRUPOS.md · CAMBIOS.md · LID.md
+│                             SEGURIDAD.md
 └── Makefile
 ```
 
@@ -205,9 +217,10 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 150 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 170 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
-                 # (concurrencia de dinero y reclamos), rachas, catálogo y gacha
+                 # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
+                 # advertencias y actividad de grupo
 go vet ./...     # limpio
 gofmt -l .       # limpio
 ```
@@ -216,6 +229,12 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.6.0** — bloque B4: **administración de grupos**. Advertencias con motivo,
+  autor y fecha (y expulsión automática al llegar al límite), `.kick`,
+  `.promote`/`.demote`, abrir/cerrar, enlace y su restablecimiento, menciones
+  masivas, datos del grupo, **bienvenida y despedida** con marcadores,
+  `.antistatus` y **conteo de actividad** propio. Las expulsiones en lote del JS
+  no se portaron: solo listan. Detalle en **[docs/GRUPOS.md](docs/GRUPOS.md)**.
 - **0.5.0** — bloque B3: **economía completa** (`.work`, `.daily`, `.weekly`,
   `.monthly`, banco, `.pay`, ranking, tienda e inventario) con la economía **por
   chat** como en el JS y las rachas globales, más el **gacha** (`.roll`,

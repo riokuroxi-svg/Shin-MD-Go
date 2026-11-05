@@ -121,6 +121,26 @@ var migrations = [][]string{
 		PRIMARY KEY (chat_id, message_id)
 	);`,
 		`CREATE INDEX IF NOT EXISTS gacha_rolls_vigencia ON gacha_rolls(expires_at);`},
+	// 11) Grupos y admin: advertencias como filas (en el JS eran un array JSON
+	// dentro del usuario) y conteo de mensajes por día (en el JS, un objeto que
+	// crecía dentro de cada usuario y se reescribía entero en cada mensaje).
+	{`CREATE TABLE IF NOT EXISTS group_warns (
+		id      INTEGER PRIMARY KEY AUTOINCREMENT,
+		chat_id TEXT    NOT NULL,
+		user_id TEXT    NOT NULL,
+		reason  TEXT    NOT NULL DEFAULT '',
+		by_id   TEXT    NOT NULL DEFAULT '',
+		at      INTEGER NOT NULL DEFAULT 0
+	);`,
+		`CREATE INDEX IF NOT EXISTS group_warns_user ON group_warns(chat_id, user_id, id DESC);`,
+		`CREATE TABLE IF NOT EXISTS chat_activity (
+		chat_id TEXT    NOT NULL,
+		user_id TEXT    NOT NULL,
+		day     TEXT    NOT NULL,
+		msgs    INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (chat_id, user_id, day)
+	);`,
+		`CREATE INDEX IF NOT EXISTS chat_activity_day ON chat_activity(chat_id, day);`},
 	// 10) Contador de rolls por persona y chat: el JS usaba el enfriamiento
 	// `lastRoll`, guardado como número absoluto dentro del JSON del usuario.
 	{`ALTER TABLE chat_users ADD COLUMN last_roll INTEGER NOT NULL DEFAULT 0;`,

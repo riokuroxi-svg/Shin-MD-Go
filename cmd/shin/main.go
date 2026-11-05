@@ -16,7 +16,9 @@ import (
 	"syscall"
 	"time"
 
+	"go.mau.fi/whatsmeow/types/events"
 	"shin-go/cmds" // sus init() registran los comandos
+
 	"shin-go/internal/bot"
 	"shin-go/internal/config"
 	"shin-go/internal/store"
@@ -24,7 +26,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.5.0"
+var version = "0.6.0"
 
 func main() {
 	var (
@@ -94,6 +96,11 @@ func main() {
 
 	router := bot.NewRouter(cfg, log, client, db, owners)
 	client.OnMessage(router.Handle)
+	// Cambios de grupo (entradas, salidas, ascensos…): la bienvenida, la
+	// despedida y el refresco de la caché de permisos.
+	client.OnGroupInfo(func(ctx context.Context, evt *events.GroupInfo) {
+		bot.HandleGroupInfo(ctx, db, log, evt)
+	})
 
 	if err := client.Login(ctx, *phone); err != nil {
 		if ctx.Err() != nil { // Ctrl+C mientras se esperaba el QR

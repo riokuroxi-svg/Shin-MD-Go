@@ -40,6 +40,17 @@ type Router struct {
 	modeMu   sync.Mutex
 	mode     string // "public" | "self"
 	modeRead time.Time
+
+	// botOffCache: por chat, si el bot está apagado ahí (`.bot off`) y cuándo
+	// se leyó. Comparte candado con el modo self: los dos son ajustes globales
+	// que se consultan en cada mensaje.
+	botOffCache map[string]botOffEntry
+}
+
+// botOffEntry es una entrada de la caché de "bot apagado".
+type botOffEntry struct {
+	off bool
+	at  time.Time
 }
 
 const (
@@ -58,14 +69,15 @@ const keyMode = "mode"
 
 func NewRouter(cfg config.Config, log *xlog.Logger, client *wa.Client, db *store.Store, owners []string) *Router {
 	r := &Router{
-		cfg:      cfg,
-		log:      log,
-		client:   client,
-		db:       db,
-		owner:    NormalizeOwners(owners),
-		groups:   NewGroupCache(client, client.IDs),
-		cooldown: map[string][]time.Time{},
-		mode:     ModePublic,
+		cfg:         cfg,
+		log:         log,
+		client:      client,
+		db:          db,
+		owner:       NormalizeOwners(owners),
+		groups:      NewGroupCache(client, client.IDs),
+		cooldown:    map[string][]time.Time{},
+		mode:        ModePublic,
+		botOffCache: map[string]botOffEntry{},
 	}
 	SetActiveRouter(r)
 	return r
@@ -79,8 +91,20 @@ var activeRouter *Router
 // SetActiveRouter registra el router del proceso (lo llama main / NewRouter).
 func SetActiveRouter(r *Router) { activeRouter = r }
 
+// ForgetChat tira la caché de "bot apagado" de un chat. Lo llama el comando
+// .bot cuando cambia el ajuste, para que surta efecto al instante.
+func ForgetChat(chat types.JID) {
+	if activeRouter != nil {
+		activeRouter.ForgetBotOff(chat)
+	}
+}
+
 // ActiveRouter devuelve el router del proceso (nil si aún no hay).
 func ActiveRouter() *Router { return activeRouter }
+
+// Cliente expone el cliente de WhatsApp (lo usa el oyente de bienvenida, que
+// corre fuera de un comando y no tiene Context).
+func (r *Router) Cliente() *wa.Client { return r.client }
 
 // Groups expone la caché de grupos (la usan los comandos de admin).
 func (r *Router) Groups() *GroupCache { return r.groups }
@@ -145,6 +169,14 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 		PushName:  info.PushName,
 		Text:      parsed.Text,
 		Raw:       parsed.Text,
+	}
+
+	// ── bot apagado en este grupo ────────────────────────────────────────
+	// `.bot off` deja el bot en silencio en ese grupo (el `isBanned` del JS).
+	// Se comprueba ANTES de los hooks: si el bot está apagado, tampoco debe
+	// estar borrando enlaces ni contando mensajes.
+	if isGroup && r.botOff(ctx, chat) && !isOwner {
+		return
 	}
 
 	// ── hooks: ven TODOS los mensajes ────────────────────────────────────
@@ -233,6 +265,43 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 		return
 	}
 	r.log.Info(fmt.Sprintf(".%s ok en %dms", cmd.Name, time.Since(start).Milliseconds()))
+}
+
+// botOff consulta si el bot está apagado en el chat, con la misma caché corta
+// que el modo self: es una consulta por mensaje y no tiene sentido ir a la base
+// todo el rato, pero tampoco quedarse con un valor viejo.
+func (r *Router) botOff(ctx context.Context, chat types.JID) bool {
+	key := chat.String()
+
+	r.modeMu.Lock()
+	if e, ok := r.botOffCache[key]; ok && time.Since(e.at) < 30*time.Second {
+		off := e.off
+		r.modeMu.Unlock()
+		return off
+	}
+	r.modeMu.Unlock()
+
+	off, err := r.db.BotOff(ctx, key)
+	if err != nil {
+		r.log.Warn("no se pudo leer si el bot está apagado en el chat: " + err.Error())
+		off = false
+	}
+
+	r.modeMu.Lock()
+	if len(r.botOffCache) > 2048 { // un bot en muchos grupos no debe crecer sin fin
+		r.botOffCache = make(map[string]botOffEntry, 2048)
+	}
+	r.botOffCache[key] = botOffEntry{off: off, at: time.Now()}
+	r.modeMu.Unlock()
+	return off
+}
+
+// ForgetBotOff tira la caché de un chat (lo usa `.bot on`: si no, el comando
+// queda ignorado por su propia caché hasta medio minuto después).
+func (r *Router) ForgetBotOff(chat types.JID) {
+	r.modeMu.Lock()
+	delete(r.botOffCache, chat.String())
+	r.modeMu.Unlock()
 }
 
 // ─── modo self ──────────────────────────────────────────────────────────────
