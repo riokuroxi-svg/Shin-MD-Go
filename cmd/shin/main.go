@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	_ "shin-go/cmds" // sus init() registran los comandos
+	"shin-go/cmds" // sus init() registran los comandos
 	"shin-go/internal/bot"
 	"shin-go/internal/config"
 	"shin-go/internal/store"
@@ -24,7 +24,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.3.0"
+var version = "0.4.0"
 
 func main() {
 	var (
@@ -37,6 +37,8 @@ func main() {
 		fmt.Println("Shin-MD (Go)", version)
 		return
 	}
+
+	cmds.SetVersion(version) // .info muestra la versión real del binario
 
 	cfg := config.Load()
 	log := xlog.New(cfg.LogLevel, os.Stdout)

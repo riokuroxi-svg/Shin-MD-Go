@@ -183,8 +183,9 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   `AdminOnly`/`BotAdminOnly` aplicados con `GetGroupInfo` y comparación por
   LID **y** teléfono, y la capa LID completa (ver **docs/LID.md**).
   *Prueba:* chat de prueba + grupo de prueba; `.lid` para ver la identidad.
-- **B2 · Menús y meta** (rápido)
-  `.menu`, `.menucat`, `.fax`, `.info`, `.owner`, `.ping` con botones.
+- **B2 · Menús y meta** ✅ *hecho (0.4.0)*
+  `.menu`, `.menucat`, `.fax` (imagen dibujada en Go, sin dependencias),
+  `.info`, `.owner`, `.report`, `.ping` con botones.
 - **B3 · Economía y perfil**
   daily, work, banco, ranking, inventario, gacha (tu `ginko-db` se convierte en
   tablas con migraciones; el formato de dinero/XP se conserva para no perder datos).

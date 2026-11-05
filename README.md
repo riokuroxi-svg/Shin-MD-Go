@@ -48,7 +48,7 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B0 · Núcleo** | cliente, sesión SQLite, pairing QR/código, cola anti-ban, logger, botones, router, economía, pruebas, binario arm64 | ✅ **hecho · revisado en 0.2.0** |
 | **B0.1 · Caza de bugs** | bloqueo de la cola, calentamiento real, prioridad por comando, `.daily` atómico, `.pin` con media, envoltorios, owners por LID | ✅ **hecho** ([docs/CAMBIOS.md](docs/CAMBIOS.md)) |
 | **B1 · Router real** | hooks `before` (antilink, afk), self-mode, admins de grupo por LID y por teléfono, **capa LID completa** | ✅ **hecho** ([docs/LID.md](docs/LID.md)) |
-| B2 · Menús y meta | `.menu`, `.menucat`, `.fax`, `.info`, `.owner` con botones | ⬜ |
+| **B2 · Menús y meta** | `.fax` (menú en imagen dibujada en Go), `.info`, `.owner`, `.report`, menú con imagen | ✅ **hecho** |
 | B3 · Economía y perfil | daily, work, banco, ranking, inventario, gacha (con migración de datos) | ⬜ |
 | B4 · Grupos y admin | warns, kick/promote, mute, horario, antistatus (el antilink ya entró en B1) | ⬜ |
 | B5 · Stickers y media | sticker/toimg/tovid con `ffmpeg`, EXIF de sticker en Go | ⬜ |
@@ -60,7 +60,7 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 ## Lo que ya funciona (probado, no prometido)
 
-**Comandos cargados hoy: 17 únicos · 52 nombres · 2 hooks.**
+**Comandos cargados hoy: 21 únicos · 69 nombres · 2 hooks.**
 
 | Comando | Qué hace |
 |---|---|
@@ -78,6 +78,10 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 | `.afk [motivo]` | avisa cuando te mencionan mientras estás ausente (hook) |
 | `.lid` | diagnóstico: cómo ve el bot tu identidad (teléfono · LID) |
 | `.self` · `.public` | el bot solo obedece al owner / responde a todos |
+| `.fax` | **menú dibujado como imagen** (fuente propia, cero dependencias) |
+| `.info` | versión, uptime, conexión, cola, memoria y estado de la base |
+| `.owner` | contacto del dueño con botones (llamar, escribir, repo) |
+| `.report` | el usuario te avisa de algo, con límite anti-spam |
 
 ### Botones: catálogo completo
 
@@ -118,6 +122,10 @@ El bot **lee el `.env` solo** (el que esté junto al binario, o el que digas en
 archivo, así que `OWNERS=521… ./shin` sigue funcionando.
 
 ```env
+BOT_NAME=SHIN-MD      # nombre que aparece en el menú y en .info
+MENU_IMAGE=0          # 1 = .menu sale como imagen dibujada
+OWNER_NAME=Roxi       # cómo te llama .owner
+OWNER_NUMBER=52155…   # número para los botones de llamar/WhatsApp
 BOT_PREFIX=".,/,!,+"
 OWNERS="5215512345678"        # acepta +, espacios y guiones: "+52 155 1234 5678"
 STATE_DIR=data
@@ -131,6 +139,15 @@ WARMUP_START=20
 WARMUP_END=500
 RICH_AI=0        # 1 = respuestas enriquecidas estilo IA (experimental)
 ```
+
+### El menú en imagen (`.fax`)
+
+`.fax` dibuja el menú con una fuente de mapa de bits propia (5×7) y `image/png`
+del paquete estándar: **sin librerías, sin fuentes TTF, sin ffmpeg**. Con
+`MENU_IMAGE=1` el propio `.menu` sale así.
+
+Todo tiene techo (40 líneas × 40 columnas, 1600×3000 px, PNG de 4 MB), porque
+lo dispara cualquiera desde el chat. Si el dibujo falla, cae a texto plano.
 
 ### Identidades: LID y teléfono
 
@@ -165,11 +182,12 @@ Shin-MD-Go/
 ├── internal/
 │   ├── config/               .env
 │   ├── xlog/                 logger con los iconos ◐ ◑ ✓ ✕
-│   ├── ui/                   botones, tarjetas, carrusel, rich, pin, evento
+│   ├── ui/                   botones, tarjetas, fax (imagen), fuentes
 │   ├── wa/                   cliente, cola anti-ban, parseo, envíos, LID
 │   ├── bot/                  router, hooks, permisos de grupo, owners
 │   └── store/                SQLite puro Go (economía/perfil/settings)
 ├── docs/                     MIGRACION.md (plan) · BOTONES.md (catálogo)
+│                             CAMBIOS.md (bugs) · LID.md · SEGURIDAD.md
 └── Makefile
 ```
 
@@ -178,7 +196,7 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 62 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 84 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, daily, owners
 go vet ./...     # limpio
 gofmt -l .       # limpio
@@ -188,6 +206,10 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.4.0** — bloque B2: `.fax` (dibujo de imagen sin dependencias), `.info`,
+  `.owner`, `.report`, menú con imagen y **revisión de seguridad** (inyección
+  de formato, amplificación, topes de CPU y de la base). Ver
+  **[docs/SEGURIDAD.md](docs/SEGURIDAD.md)**.
 - **0.3.0** — bloque B1: hooks (antilink, afk), modo self, permisos de admin de
   grupo y **capa LID completa** (store espejo, resolver, fusión de cuentas).
   Detalle en **[docs/LID.md](docs/LID.md)**.

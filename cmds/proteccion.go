@@ -18,6 +18,14 @@ import (
 	"shin-go/internal/wa"
 )
 
+// Guardas del antilink: sin esto, alguien escribiendo enlaces en bucle hace
+// que el bot responda a cada uno (spam saliente = ban). 3 avisos por minuto y
+// por usuario como máximo.
+var (
+	antilinkGuard = bot.NewRateGuard(3, time.Minute)
+	afkGuard      = bot.NewRateGuard(1, 10*time.Second)
+)
+
 const (
 	keyAntilink = "antilink"
 	keyAFK      = "afk"       // motivo
@@ -47,14 +55,24 @@ func init() {
 			return false // los admins del grupo sí pueden
 		}
 
-		// Se borra el mensaje (si el bot puede) y se avisa. Si no puede borrar,
-		// al menos queda el aviso: el silencio haría pensar que no funciona.
+		// Primero el límite: si este usuario ya va por su tercer aviso del
+		// minuto, se borra igual pero no se responde (no darle conversación).
+		allow, warn := antilinkGuard.Allow(c.Key())
+
 		borrado := true
 		if err := c.Bot.DeleteMessage(c.Ctx, c.Chat, c.Sender, c.Event.Info.ID); err != nil {
 			borrado = false
 			c.Log.Warn("antilink: no se pudo borrar el mensaje: " + err.Error())
 		}
 
+		if !allow {
+			if warn {
+				_ = c.Reply("🔗 *Antilink* — demasiados enlaces seguidos. Se seguirán borrando, sin avisar.")
+			}
+			return true
+		}
+
+		// El nombre viene del perfil: es texto libre, se limpia y se escapa.
 		aviso := "🔗 *Antilink* — " + nombre(c) + ", los enlaces no están permitidos en este grupo."
 		if borrado {
 			aviso += "\n_Mensaje borrado._"
@@ -90,6 +108,9 @@ func init() {
 		if len(mentioned) == 0 {
 			return false
 		}
+		if len(mentioned) > 5 { // no se avisa de 50 ausentes a la vez
+			mentioned = mentioned[:5]
+		}
 		var avisos []string
 		for _, jid := range mentioned {
 			key := c.Bot.IDs.Key(c.Ctx, jid)
@@ -106,6 +127,11 @@ func init() {
 		}
 		if len(avisos) == 0 {
 			return false
+		}
+		// Un aviso de afk por persona cada 10 s: en un grupo activo se puede
+		// mencionar al mismo ausente muchas veces seguidas.
+		if allow, _ := afkGuard.Allow(c.Key()); !allow {
+			return true
 		}
 		_ = c.Reply("╭─「 *AFK* 」\n│ " + strings.Join(avisos, "\n│\n│ "))
 		return true
@@ -179,9 +205,10 @@ func init() {
 			if motivo == "" {
 				motivo = defaultAFK
 			}
-			if len([]rune(motivo)) > 140 { // un motivo eterno es un spam
-				motivo = string([]rune(motivo)[:140]) + "…"
-			}
+			// El motivo lo escribe el usuario y el bot lo repite después a
+			// terceros: se recorta, se limpia y se escapa el formato para que
+			// no pueda falsificar un aviso del bot.
+			motivo = bot.ClipText(motivo, 140)
 
 			desde := time.Now().UTC().Format("02/01 15:04")
 			if err := c.DB.SetSetting(c.Ctx, key, keyAFK, motivo); err != nil {
@@ -222,11 +249,13 @@ func afkOf(c *bot.Context, key string) (string, bool) {
 	return v, true
 }
 
+// nombre devuelve cómo llamar al que escribe. El PushName es texto libre del
+// perfil: se limpia (saltos, invisibles), se recorta y se escapa.
 func nombre(c *bot.Context) string {
-	if c.PushName != "" {
-		return "@" + c.PushName
+	if n := bot.CleanName(c.PushName, 24); n != "" {
+		return "*" + n + "*"
 	}
-	return "@" + c.Sender.User
+	return "*" + c.Sender.User + "*"
 }
 
 // shortJID deja el número o el LID sin el dominio, para los avisos.

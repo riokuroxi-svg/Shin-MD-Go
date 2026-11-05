@@ -231,6 +231,10 @@ func (c *Client) SetTyping(ctx context.Context, chat types.JID) {
 	_ = c.WA.SendChatPresence(ctx, chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
 }
 
+// Config devuelve la configuración con la que se creó el cliente (los
+// comandos la necesitan para .owner, .info, etc.).
+func (c *Client) Config() config.Config { return c.cfg }
+
 // Prefixes / FirstPrefix: el router y los comandos leen los prefijos del .env.
 func (c *Client) Prefixes() []string { return c.cfg.Prefixes }
 

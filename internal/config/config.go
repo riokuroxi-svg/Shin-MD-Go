@@ -35,6 +35,11 @@ type Config struct {
 	RichAI   bool   // RICH_AI=1: respuestas enriquecidas estilo IA (experimental)
 	EnvFile  string // ruta del .env que se leyó ("" si no había)
 
+	BotName     string // BOT_NAME (por defecto "SHIN-MD")
+	MenuImage   bool   // MENU_IMAGE=1: el .menu manda imagen de cabecera
+	OwnerName   string // OWNER_NAME: cómo se llama el dueño en .owner
+	OwnerNumber string // OWNER_NUMBER: número para el botón de llamada
+
 	// Anti-ban (mismos parámetros que el motor JS)
 	BaseDelay   time.Duration // 1200ms por defecto
 	JitterSigma float64       // 0.25
@@ -111,11 +116,15 @@ func LoadFrom(envPath string) Config {
 		DBFile:   vars.str("SHIN_DB_PATH", filepath.Join(stateDir, "shin.db")),
 		AuthFile: vars.str("SHIN_AUTH_DB", filepath.Join(stateDir, "auth.db")),
 
-		Prefixes: prefixes,
-		Owners:   owners,
-		LogLevel: vars.str("LOG_LEVEL", "info"),
-		RichAI:   vars.str("RICH_AI", "0") == "1",
-		EnvFile:  used,
+		Prefixes:    prefixes,
+		Owners:      owners,
+		LogLevel:    vars.str("LOG_LEVEL", "info"),
+		RichAI:      vars.str("RICH_AI", "0") == "1",
+		EnvFile:     used,
+		BotName:     vars.str("BOT_NAME", "SHIN-MD"),
+		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",
+		OwnerName:   vars.str("OWNER_NAME", "el dueño"),
+		OwnerNumber: vars.str("OWNER_NUMBER", ""),
 
 		BaseDelay:   time.Duration(vars.integer("ANTIBAN_BASE_MS", 1200)) * time.Millisecond,
 		JitterSigma: vars.float("ANTIBAN_SIGMA", 0.25),

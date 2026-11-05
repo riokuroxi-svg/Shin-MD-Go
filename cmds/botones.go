@@ -87,7 +87,24 @@ func init() {
 			if len(partes) < 3 {
 				return c.Reply("Necesito pregunta + 2 opciones: .encuesta ¿Café?; sí; no")
 			}
-			return c.Bot.SendPoll(c.Ctx, c.Chat, partes[0], partes[1:], 1, c.Priority())
+
+			// Topes de WhatsApp: pregunta de 255, opción de 100 y 12 opciones
+			// como máximo. Sin esto, un mensaje largo se manda igual y el
+			// teléfono lo tira sin avisar (o peor: el envío queda a medias).
+			pregunta := bot.ClipText(partes[0], 255)
+			opciones := make([]string, 0, len(partes)-1)
+			for _, op := range partes[1:] {
+				if op = bot.ClipText(op, 100); op != "" {
+					opciones = append(opciones, op)
+				}
+				if len(opciones) == 12 {
+					break
+				}
+			}
+			if len(opciones) < 2 {
+				return c.Reply("Necesito al menos dos opciones con texto.")
+			}
+			return c.Bot.SendPoll(c.Ctx, c.Chat, pregunta, opciones, 1, c.Priority())
 		},
 	})
 
@@ -155,11 +172,17 @@ func init() {
 	})
 }
 
+// splitSemi parte por ';' con techo: 20 trozos es más que de sobra para una
+// encuesta y evita procesar un texto lleno de separadores.
 func splitSemi(s string) []string {
+	const maxPartes = 20
 	var out []string
 	cur := ""
 	for _, r := range s {
 		if r == ';' {
+			if len(out) >= maxPartes {
+				return out
+			}
 			out = append(out, strings.TrimSpace(cur))
 			cur = ""
 			continue

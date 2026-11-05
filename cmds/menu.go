@@ -24,25 +24,40 @@ func init() {
 		Run: func(c *bot.Context) error {
 			unique, aliases := bot.Count()
 
+			// .menu <categoría> → imagen de esa categoría (si MENU_IMAGE=1) o texto
 			if len(c.Args) > 0 {
-				return menuCategory(c, strings.ToLower(c.Args[0]))
+				cat := strings.ToLower(c.Args[0])
+				if c.Bot.Config().MenuImage {
+					return sendFax(c, cat)
+				}
+				return menuCategory(c, cat)
+			}
+
+			// MENU_IMAGE=1: el menú sale como imagen dibujada (más vistoso y
+			// no se puede "copiar" el formato). Por defecto va con botones,
+			// que es más rápido y funciona en cualquier teléfono.
+			if c.Bot.Config().MenuImage {
+				return sendFax(c, "")
 			}
 
 			body := fmt.Sprintf(
-				"╭─「 *SHIN-MD* 」\n"+
+				"╭─「 *%s* 」\n"+
 					"│ 反魂 · núcleo en Go\n"+
-					"│ %d comandos · %d nombres\n"+
+					"│ %d comandos · %d nombres · %d hooks\n"+
 					"╰─ prefijos: %s",
-				unique, aliases, strings.Join(c.Bot.Prefixes(), " "))
+				bot.CleanName(c.Bot.Config().BotName, 24),
+				unique, aliases, bot.HookCount(),
+				strings.Join(c.Bot.Prefixes(), " "))
 
 			return c.ReplyButtons(
-				"SHIN-MD",
+				c.Bot.Config().BotName,
 				body,
 				"Toca un botón o escribe .menu <categoría>",
 				bot.QuickReply("📋 Categorías", "menucat"),
+				bot.QuickReply("🖼 Fax", "fax"),
 				bot.QuickReply("🏓 Ping", "ping"),
 				bot.CTACopy("📮 Copiar prefijo", c.Bot.FirstPrefix()),
-				bot.CTAURL("🌐 Repositorio", "https://github.com/riokuroxi-svg/Shin-MD"),
+				bot.CTAURL("🌐 Repositorio", repoURL),
 			)
 		},
 	})
@@ -89,7 +104,9 @@ func menuCategory(c *bot.Context, cat string) error {
 	cats := bot.ByCategory()
 	cmds, ok := cats[bot.Category(cat)]
 	if !ok {
-		return c.Reply("✕ No existe la categoría *" + cat + "*.\nUsa .menucat")
+		// El nombre de categoría viene del usuario y se repite en la
+		// respuesta: se limpia y se recorta antes de mostrarlo.
+		return c.Reply("✕ No existe la categoría *" + bot.CleanName(cat, 24) + "*.\nUsa .menucat")
 	}
 
 	var sb strings.Builder

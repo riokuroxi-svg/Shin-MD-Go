@@ -259,3 +259,63 @@ make termux           # arm64 estático, 17 MB
 Pruebas nuevas en esta ronda: **25** (8 de la cola, 5 de envoltorios y contexto
 citado, 3 de owners, 4 de base de datos, 5 de configuración). Total del
 repo: **42**.
+
+---
+
+# Cambios 0.4.0 — bloque B2 y revisión de seguridad
+
+## 12. El dibujo del menú no filtraba caracteres invisibles
+
+**Raíz:** `ui.sanitizeText` quitaba los caracteres de control (`< 0x20`) pero no
+los invisibles de Unicode. El importante es **U+202E (right-to-left override)**:
+mete el texto al revés en lo que se dibuja, así que sirve para falsificar la
+imagen del menú (por ejemplo, para que un comando falso parezca el oficial).
+
+**Arreglo:** se filtran U+200B–U+200F, U+202A–U+202E, U+2060 y U+FEFF, además
+de convertir el espacio duro. Lo cazó la prueba `TestSanitizeText` mientras la
+escribía, no un usuario en producción.
+
+## 13. Nombre de perfil con formato (inyección en los avisos del bot)
+
+**Raíz:** el `PushName` es texto libre y se metía tal cual en los mensajes
+(`"🔗 Antilink — " + nombre + ", los enlaces…"`). Alguien llamado `*Owner*` hacía
+que el aviso del bot pareciera firmado por otra persona.
+
+**Arreglo:** `bot.CleanName` (limpia, recorta, escapa) y `bot.ClipText` para
+todo texto de usuario que el bot repita. También se escapa el nombre de
+categoría en `.menu <x>`.
+
+## 14. Los hooks no tenían ningún límite
+
+**Raíz:** el cooldown protegía los comandos, pero el antilink respondía a
+**cada** mensaje con enlace. 50 enlaces seguidos = 50 mensajes salientes del
+bot: spam saliente, o sea ban.
+
+**Arreglo:** `bot.RateGuard` (3 avisos/min en antilink, 1 cada 10 s en afk, 2
+cada 10 min en `.report`), con aviso único cada 5 minutos y mapa acotado a 2048
+usuarios. El afk además limita a 5 mencionados por mensaje.
+
+## 15. Topes de WhatsApp en `.encuesta`
+
+**Raíz:** la pregunta y las opciones iban tal cual. WhatsApp admite 255
+caracteres de pregunta, 100 por opción y 12 opciones; pasado eso el mensaje se
+envía y el teléfono lo tira (o queda a medias), sin error visible.
+
+**Arreglo:** recorte a esos límites y `splitSemi` con techo de 20 trozos.
+
+## 16. `.info` contaba datos internos a cualquiera
+
+**Raíz:** usuarios registrados, identidades conocidas y desde cuándo calienta el
+número se mostraban a quien escribiera el comando.
+
+**Arreglo:** esos datos solo los ve el owner; el resto ve versión, uptime,
+conexión, cola y memoria.
+
+## 17. Nombres de comando sin validar
+
+El id de un botón es un dato del mensaje. Ahora el router exige
+`[A-Za-z0-9_-]` y 32 caracteres como máximo antes de tocar el registro
+(`bot.IsSafeCommandName`).
+
+**Pruebas nuevas en esta ronda:** 22 (fax, límites, salida, seguridad).
+Total del repo: **84**.

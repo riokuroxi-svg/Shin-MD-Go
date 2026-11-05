@@ -122,6 +122,9 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 	identity := r.client.IDs.Resolve(ctx, sender, senderAlt)
 
 	parsed := wa.ParseMessage(evt.Message, r.cfg.Prefixes)
+	// El texto que verán los hooks va limpio de controles e invisibles (los
+	// mismos que se usan para disfrazar "h t t p s : //" o falsificar nombres).
+	parsed.Text = CleanInvisible(parsed.Text)
 
 	isOwner := IsOwner(sender, senderAlt, r.owner)
 
@@ -208,6 +211,14 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 			r.log.Warn(fmt.Sprintf("rate-limit: %s (esperar %s)", sender, wait.Round(time.Second)))
 			return
 		}
+	}
+
+	// ── nombre del comando ───────────────────────────────────────────────
+	// El registro solo contiene nombres limpios, pero se comprueba igual: el
+	// nombre acaba en logs y en URLs de ayuda, y un id de botón manipulado no
+	// debe poder colar rutas o formatos.
+	if !IsSafeCommandName(cmdName) {
+		return
 	}
 
 	c.CmdPriority = cmd.Priority

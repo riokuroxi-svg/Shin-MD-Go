@@ -1,0 +1,166 @@
+# Seguridad: qué puede hacer un usuario y qué le impide el bot
+
+_Revisión del núcleo · 5-nov-2026 · versión 0.4.0_
+
+Un bot de WhatsApp es, a efectos prácticos, **un proceso que ejecuta lo que le
+llega de internet y responde gastando tu número**. Este documento lista los
+riesgos reales (no los teóricos), qué se hizo en el código y qué queda abierto
+porque la plataforma no lo permite cerrar.
+
+---
+
+## 1. Inyección de formato en los mensajes
+
+**El problema.** WhatsApp interpreta `*negrita*`, `_cursiva_`, `` `código` `` y
+`~~~tachado~~~`. El nombre de perfil (`PushName`) es texto libre: cualquiera
+puede llamarse `*Owner*_oficial_` y, si el bot lo copia tal cual en un aviso,
+el mensaje **del bot** parecerá decir otra cosa.
+
+**Qué se hizo.**
+
+| Dónde | Qué se aplica |
+|---|---|
+| Nombres de usuario en avisos | `bot.CleanName` — quita saltos, controles e invisibles, recorta y escapa el formato |
+| Texto que el usuario escribe y el bot repite (motivo de `.afk`, `.report`) | `bot.ClipText` — limpia, recorta a 140/500 caracteres y escapa |
+| Nombre de categoría en `.menu <x>` | `bot.CleanName` antes de repetirlo |
+| Texto analizado para detectar enlaces | `bot.CleanInvisible` — quita invisibles pero **no** escapa (si escapara, `h_t_t_p_s` no se detectaría) |
+| Dibujo del `.fax` | `ui.sanitizeText` — quita controles e invisibles, incluido **U+202E** (invierte el orden del texto dibujado) |
+
+**Pruebas:** `TestCleanNameStripsFormatAndInvisibles`,
+`TestNameInjectionIsNeutralized`, `TestAFKReasonCannotForgeMessages`,
+`TestSanitizeStripsFormatOverride`.
+
+---
+
+## 2. Enlaces disfrazados en el antilink
+
+**El problema.** Se puede escribir un dominio con caracteres invisibles
+(`https://ejemplo.com`) o usar un acortador para saltarse una lista negra. Y al
+revés: una detección demasiado agresiva borra mensajes legítimos ("informe.final",
+"v1.2", un correo electrónico).
+
+**Qué se hizo.** `bot/links.go` normaliza (quita invisibles, espacios duros,
+controles) y detecta por capas: esquemas, dominios de invitación conocidos y
+dominios con extensión real de 2+ caracteres antes del punto. Los **correos se
+descartan antes de analizar**. Probado con 22 casos, positivos y negativos.
+
+**Lo que no se puede cerrar:** un acortador nuevo o un dominio recién registrado
+puede pasar. El antilink reduce ruido, no es un antivirus.
+
+---
+
+## 3. Amplificación y spam saliente (riesgo de ban)
+
+**El problema.** El recurso escaso es tu número. Un usuario que escribe 50
+enlaces seguidos hacía que el bot respondiera 50 veces: eso es exactamente lo
+que WhatsApp marca como spam.
+
+**Qué se hizo.**
+
+| Capa | Límite |
+|---|---|
+| Comandos | 10 por minuto y usuario (`router.rateLimited`) + cooldown por comando |
+| Avisos de antilink | 3 por minuto y usuario; después borra en silencio y avisa una sola vez cada 5 min |
+| Avisos de afk | 1 cada 10 s por usuario, y máximo 5 mencionados por mensaje |
+| `.report` | 2 cada 10 minutos por usuario |
+| Envíos totales | cola anti-ban: un envío a la vez, jitter y cupo diario de calentamiento |
+| Texto de usuario reenviado | tope de 1000 caracteres (`MaxUserText`) y `ClipText` |
+| Respuestas largas | `bot.Chunk` parte en trozos de 3500 caracteres |
+
+Los dos guardas (`RateGuard`) tienen techo de 2048 entradas y poda: un bot en
+grupos grandes no acumula estado infinito.
+
+**Pruebas:** `TestRateGuardAllowsUntilLimit`, `TestRateGuardWindowExpires`,
+`TestRateGuardBounded`, `TestChunkProtectsBigOutput`.
+
+---
+
+## 4. Coste de CPU por mensaje (DoS de bajo esfuerzo)
+
+**El problema.** El `.fax` dibuja una imagen en Go. Es lo único del bot que hace
+trabajo de CPU proporcional a la entrada, y lo dispara cualquiera.
+
+**Qué se hizo.** Topes duros en `ui/fax.go`: 40 líneas, 40 columnas, 1600×3000
+px, escala 2–6, PNG de 4 MB como máximo, `png.BestSpeed`. El texto se recorta
+**antes** de reservar memoria, así que la memoria no depende de lo que mande el
+usuario. Probado con 2000 líneas de basura: termina muy por debajo de 2 s.
+
+**Prueba:** `TestRenderFaxIsBounded`, `TestRenderFaxLimitsHugeInput`.
+
+---
+
+## 5. Inyección en la base de datos
+
+**El problema.** Los SQL usan parámetros (`?`), pero había dos sitios donde el
+dato del usuario entraba en **estructuras**, no en valores:
+
+1. `settings`: la clave iba dentro de una ruta JSON de SQLite (`'$.' || clave`).
+   Una clave con comillas o puntos podía reescribir el JSON entero del usuario.
+2. Declaraciones de tabla con nombres dinámicos — se eliminaron; todo es
+   estático.
+
+**Qué se hizo.** `store.validKey` solo admite `[A-Za-z0-9_-]` (máx. 48), y
+`GetSetting` lee con `json_extract(json, ?)` parametrizado. Probado con
+`a.b`, `a'"`, `x'; DROP TABLE settings; --`, vacío y con espacios.
+
+**Prueba:** `TestSettingsRejectBadKeys`.
+
+---
+
+## 6. Nombres de comando
+
+El id de un botón es un dato del mensaje y puede venir manipulado. El router
+solo acepta nombres con `[A-Za-z0-9_-]` (máx. 32) antes de buscar en el
+registro (`bot.IsSafeCommandName`) — así un "comando" no puede colarse como
+ruta, como clave de la base ni como parte de una URL.
+
+**Prueba:** `TestIsSafeCommandName`.
+
+---
+
+## 7. Datos en disco
+
+| Archivo | Permisos | Contenido |
+|---|---|---|
+| `data/auth.db` (+ `-wal`/`-shm`) | `600` | **llaves de la sesión de WhatsApp**: con esto se suplanta el número |
+| `data/shin.db` | `600` | economía, settings, identidades |
+| carpeta `data/` | `700` | — |
+
+Añadido en 0.2.0: `secureSessionFiles` fuerza `600` en la sesión, que antes se
+creaba legible por otros usuarios del servidor.
+
+**Lo que queda abierto:** si alguien tiene acceso de lectura al usuario del
+sistema, tiene la sesión. No hay cifrado del `auth.db` (whatsmeow no lo ofrece);
+la única defensa real es un usuario de sistema dedicado y un disco con permisos.
+
+---
+
+## 8. Fuga de información en las respuestas
+
+- `.lid` muestra **tu propia** identidad, no la de otros.
+- `.info` oculta al no-owner los datos internos (usuarios registrados,
+  identidades conocidas); el owner los ve porque le sirven para operar.
+- Los errores de un handler se registran en el log y **no** se le mandan al
+  usuario (un `err.Error()` puede revelar rutas o esquemas internos).
+
+---
+
+## 9. Lo que este bot NO protege (dicho claro)
+
+| Riesgo | Por qué no se puede cerrar aquí |
+|---|---|
+| Ban del número | ningún bot es inmune; el antilink y la cola reducen el riesgo, no lo eliminan |
+| Suplantación de un miembro | WhatsApp no verifica identidad ante el bot; se puede comparar por LID/teléfono, no por "quién es de verdad" |
+| Fotos, vídeos y documentos de los usuarios | el bot no los procesa en este bloque (B5 los abre: ahí hará falta validar tipo y tamaño de verdad, no la extensión) |
+| `ffmpeg` y binarios externos | se llamarán por `os/exec` con argumentos controlados, nunca con una cadena de shell armada desde el chat |
+| Extracción de comandos por fuerza bruta | el cooldown y el cupo diario lo hacen lento, no imposible |
+
+---
+
+## 10. Cómo revisar esto tú mismo
+
+```bash
+go test ./... -run 'Guard|Clean|Chunk|Injection|Sanitize|Settings|SafeCommand'
+grep -rn "os/exec\|exec.Command" .            # todavía no hay ninguno
+grep -rn "Sprintf(.*SELECT\|Query(.*+ " .     # consultas armadas a mano
+```
