@@ -1,0 +1,37 @@
+# Shin-MD-Go — laboratorio y ejecución
+#
+#   docker compose -f deploy/sandbox/docker-compose.yml run --rm shin
+#   docker compose -f deploy/sandbox/docker-compose.yml run --rm musica bajar "lofi" -o /data/x.mp3
+#
+# El servicio `musica` existe para probar el bloque de música sin vincular
+# WhatsApp: sirve para comprobar fuentes, topes y tiempos desde cualquier red.
+
+services:
+  shin:
+    build:
+      context: ../..
+      dockerfile: deploy/sandbox/Dockerfile
+    image: shin-md-go:local
+    container_name: shin
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      STATE_DIR: /data
+      TZ: America/Mexico_City
+    volumes:
+      - shin-data:/data
+    # Sin puertos: el bot no escucha conexiones.
+
+  musica:
+    build:
+      context: ../..
+      dockerfile: deploy/sandbox/Dockerfile
+    image: shin-md-go:local
+    entrypoint: ["/usr/local/bin/shin-musica"]
+    command: ["buscar", "lofi"]
+    volumes:
+      - shin-data:/data
+
+volumes:
+  shin-data:
