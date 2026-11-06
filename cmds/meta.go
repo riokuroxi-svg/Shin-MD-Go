@@ -70,6 +70,7 @@ func init() {
 				fmt.Sprintf("│ Comandos: %d (%d nombres) · %d hooks", unique, aliases, bot.HookCount()),
 				fmt.Sprintf("│ Cola: %s", cola),
 				fmt.Sprintf("│ Mensajes: %s", mensajesEnParalelo()),
+				fmt.Sprintf("│ Red: %s", estadoRed()),
 				fmt.Sprintf("│ Calentamiento: desde %s", snap.Anchor.Format("02/01/2006")),
 				fmt.Sprintf("│ Memoria: %s", sizeMB(mem.Alloc)),
 				fmt.Sprintf("│ Go: %s · %s/%s", runtime.Version(), runtime.GOOS, runtime.GOARCH),
@@ -201,6 +202,18 @@ func SetVersion(v string) { version = v }
 // mensajesEnParalelo pinta el estado del repartidor (workers, cola y
 // descartes). Si por lo que sea no hay repartidor (pruebas, arranque a medias),
 // devuelve "1 a la vez" en vez de romper el mensaje.
+// estadoRed resume el reparto de direcciones propias. Sin RED_PREFIJO no hay
+// nada que contar, y se dice tal cual en vez de inventar una línea.
+func estadoRed() string {
+	r := bot.RedActivo()
+	if r == nil {
+		return "IP del sistema (sin bloque propio)"
+	}
+	e := r.Estado(time.Now())
+	return fmt.Sprintf("%s · %d/%d direcciones usadas · %d agotadas · tope %d peticiones/%ds",
+		e.Prefijo, e.EnUso, e.Total, e.Agotadas, e.MaxPorIP, e.VentanaSeg)
+}
+
 func mensajesEnParalelo() string {
 	d := bot.DispatcherActivo()
 	if d == nil {

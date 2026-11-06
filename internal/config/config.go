@@ -38,15 +38,21 @@ type Config struct {
 	// GachaFile: catálogo de personajes (mismo nombre de variable que el bot
 	// de JS: CHARACTERS_FILE). Si el archivo no está, el gacha lo dice una vez
 	// y sigue funcionando con el catálogo vacío en vez de romper.
-	GachaFile   string // CHARACTERS_FILE (por defecto data/characters.json)
-	BotName     string // BOT_NAME (por defecto "SHIN-MD")
-	Workers     int    // WORKERS: mensajes procesados a la vez (1 = como antes)
-	QueueSize   int    // QUEUE: cuántos mensajes pueden esperar antes de descartar
-	StickerPack string // STICKER_PACK: nombre del paquete en el sticker
-	StickerAuth string // STICKER_AUTHOR: autor que se ve al abrir el sticker
-	MenuImage   bool   // MENU_IMAGE=1: el .menu manda imagen de cabecera
-	OwnerName   string // OWNER_NAME: cómo se llama el dueño en .owner
-	OwnerNumber string // OWNER_NUMBER: número para el botón de llamada
+	GachaFile string // CHARACTERS_FILE (por defecto data/characters.json)
+	BotName   string // BOT_NAME (por defecto "SHIN-MD")
+	Workers   int    // WORKERS: mensajes procesados a la vez (1 = como antes)
+	QueueSize int    // QUEUE: cuántos mensajes pueden esperar antes de descartar
+
+	// Red propia: prefijo IPv6 (o IPv4) del que se toman las direcciones de
+	// origen. Vacío = sale por la dirección del sistema, como siempre.
+	RedPrefijo  string        // RED_PREFIJO="2001:db8:1:2::/64"
+	RedPorIP    int           // RED_MAX_POR_IP: peticiones por dirección y ventana (def. 50)
+	RedVentana  time.Duration // RED_VENTANA: ventana del conteo (def. 1m)
+	StickerPack string        // STICKER_PACK: nombre del paquete en el sticker
+	StickerAuth string        // STICKER_AUTHOR: autor que se ve al abrir el sticker
+	MenuImage   bool          // MENU_IMAGE=1: el .menu manda imagen de cabecera
+	OwnerName   string        // OWNER_NAME: cómo se llama el dueño en .owner
+	OwnerNumber string        // OWNER_NUMBER: número para el botón de llamada
 
 	// Anti-ban (mismos parámetros que el motor JS)
 	BaseDelay   time.Duration // 1200ms por defecto
@@ -146,6 +152,9 @@ func LoadFrom(envPath string) Config {
 		BotName:     vars.str("BOT_NAME", "SHIN-MD"),
 		Workers:     vars.num("WORKERS", 4, 1, 16),
 		QueueSize:   vars.num("QUEUE", 128, 1, 1024),
+		RedPrefijo:  vars.get("RED_PREFIJO"),
+		RedPorIP:    vars.num("RED_MAX_POR_IP", 50, 1, 10000),
+		RedVentana:  time.Duration(vars.num("RED_VENTANA", 60, 1, 3600)) * time.Second,
 		StickerPack: vars.str("STICKER_PACK", "Shin-MD-Go"),
 		StickerAuth: vars.str("STICKER_AUTHOR", "riokuroxi-svg"),
 		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",

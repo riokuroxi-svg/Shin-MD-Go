@@ -165,7 +165,43 @@ RICH_AI=0        # 1 = respuestas enriquecidas estilo IA (experimental)
 WORKERS=4        # mensajes que se atienden a la vez (1 = uno detrás de otro)
 QUEUE=128        # cuántos mensajes pueden esperar antes de descartar
 CHARACTERS_FILE=data/characters.json   # catálogo del gacha (si falta, lo dice)
+
+# Direcciones de origen propias (opcional)
+RED_PREFIJO=          # p. ej. 2001:db8:1:2::/64 — vacío = IP del sistema
+RED_MAX_POR_IP=50     # peticiones por dirección dentro de la ventana
+RED_VENTANA=60        # segundos de la ventana
 ```
+
+### Música (`.song`, `.play`) y banco de pruebas
+
+`internal/musica` busca en **Audius** (audio completo, catálogo libre),
+**Deezer** e **iTunes** (ficha + preview oficial de 30 s). Lo comercial nunca se
+descarga: `Pista.Libre` lo impide y hay una prueba que lo fija.
+
+```sh
+go run ./cmd/shin-musica buscar "lofi"
+go run ./cmd/shin-musica bajar  "chill instrumental" -o /tmp/cancion.mp3
+```
+
+### Red propia (opcional)
+
+Si el servidor tiene un bloque IPv6 (casi todos los VPS traen un `/64`), el bot
+puede repartir su tráfico saliente entre las direcciones del bloque en vez de
+salir siempre por la misma:
+
+```sh
+sh deploy/red-ipv6.sh revisar                     # ¿qué hay en este equipo?
+sudo sh deploy/red-ipv6.sh montar 2001:db8:1:2::/64
+sh deploy/red-ipv6.sh probar 2001:db8:1:2::/64    # ¿sale por direcciones distintas?
+```
+
+El script enruta el prefijo a `lo`, activa `ip_nonlocal_bind` y **cierra la
+entrada al bloque con nftables** para que no quede un proxy abierto (eso es lo
+que hace que un proveedor suspenda el servidor). `.info` muestra una línea
+`Red:` con el estado, o `IP del sistema` si no hay bloque configurado.
+
+Esto administra direcciones propias: no genera `poToken` ni salta ninguna
+protección de plataforma.
 
 ### El menú en imagen (`.fax`)
 

@@ -636,3 +636,112 @@ gorutinas (cada `Context` es de un solo mensaje), `WaitGroup.Add` dentro de la
 gorutina (aquí se llama antes), `time.After` en bucles calientes (no hay bucles
 calientes) y transacciones SQLite que abren otra conexión con `MaxOpenConns(1)`
 (las tres transacciones piden todo lo que necesitan **antes** de `BeginTx`).
+
+## 36. Direcciones de origen propias (`internal/red`)
+
+El bot no tenía forma de repartir su tráfico saliente: todo salía por la misma
+dirección. Cuando se empiecen a resolver enlaces (bloque B6), eso concentra el
+patrón y es justo lo que dispara un bloqueo.
+
+**Qué se añadió.** Un paquete nuevo, `internal/red`, con tres piezas:
+
+- `Rotador`: reparte las peticiones entre las direcciones de un prefijo propio
+  (`RED_PREFIJO`), respetando un tope por dirección y una ventana de tiempo.
+  Reserva la primera dirección del bloque (router del segmento en IPv6, red en
+  IPv4) y nunca la entrega.
+- `Transporte`: devuelve un `*http.Transport` que sale por una dirección
+  distinta en **cada conexión**. Desactiva keep-alive a propósito: reutilizar
+  una conexión reutiliza su dirección de origen, que es lo que se quiere evitar.
+- `Estado`: resumen para `.info`.
+
+**Configuración.** `RED_PREFIJO` (vacío = comportamiento anterior, sale por la
+dirección del sistema), `RED_MAX_POR_IP` (def. 50) y `RED_VENTANA` en segundos
+(def. 60). Los tres se recortan a valores razonables con `vars.num`, igual que
+`WORKERS` y `QUEUE`. Un prefijo mal escrito **no tumba el bot**: se avisa por
+registro y se sigue saliendo por la dirección del sistema.
+
+**Validación de prefijos.** Se rechaza cualquier bloque más grande que /32 en
+IPv6 o /8 en IPv4: `::/0` no es un bloque de origen, es media internet. Lo
+detectó la prueba `TestNuevoRechazaBasura`, no una revisión a ojo.
+
+**Pruebas (9 nuevas, 226 → 235).** La que importa es
+`TestTransporteCambiaLaDireccionDeOrigen`: levanta un servidor HTTP local y
+comprueba que cada petición llega desde una dirección distinta y que ninguna se
+repite con `MaxPorIP=1`. Se ejecuta sobre loopback (`127.0.0.0/8`), que funciona
+en cualquier Linux sin privilegios; en un servidor con `/64` es el mismo camino
+de código.
+
+**Despliegue.** `deploy/red-ipv6.sh` con cuatro modos (`revisar`, `montar`,
+`probar`, `deshacer`). El modo `montar` configura `ip_nonlocal_bind`, enruta el
+prefijo a `lo` y **cierra la entrada al bloque con nftables**: rechaza conexiones
+nuevas hacia el prefijo y solo acepta las ya establecidas. Sin eso, el bloque se
+convierte en un proxy abierto y el proveedor termina suspendiendo el servidor.
+
+**Lo que este paquete no hace, y es deliberado:** no genera `poToken`, no salta
+captchas ni ninguna protección de plataforma. Administra direcciones propias y
+nada más.
+
+## 37. Música: catálogos que sí permiten descargar (`internal/musica`)
+
+El bot no tenía forma de buscar ni entregar música. El bloque añade tres fuentes
+con permisos distintos, y la diferencia entre ellas está en el código, no en la
+configuración:
+
+| Fuente | Qué entrega | `Pista.Libre` |
+|---|---|---|
+| Audius | audio completo (catálogo libre y descentralizado) | `true` |
+| Deezer | ficha + preview oficial de 30 s | `false` |
+| iTunes | ficha + preview oficial de 30 s | `false` |
+
+`Descargar` se niega con `ErrNoLibre` cuando la pista no es libre. No es un
+ajuste: es una negativa deliberada, y hay una prueba que la fija
+(`TestDescargarSeNiegaConPreview`).
+
+**Búsqueda combinada.** `Buscar` consulta las tres fuentes en paralelo y
+devuelve `Busqueda{Pistas, Fallos}`: una fuente caída no invalida las demás, y
+el fallo queda registrado con su motivo. Ordena primero lo que tiene audio
+completo.
+
+**Tres guardas que salieron de probar contra las APIs de verdad:**
+
+1. **`is_streamable`.** Audius devuelve en la búsqueda pistas que después
+   responden `404` al pedirles el flujo. Ahora se filtran. Lo descubrió una
+   descarga real que falló, no una revisión de código.
+2. **`artwork.mirrors` es una lista**, no una cadena. Un `map[string]string`
+   rompía el análisis de la respuesta entera; ahora se lee como `RawMessage` y
+   se filtra tamaño por tamaño.
+3. **Tope de 24 MB.** Un `mix` de tres horas pesa 436 MB y el intento se aborta
+   por cabecera, sin descargar nada. La herramienta de laboratorio, además,
+   pasa a la siguiente candidata en vez de rendirse.
+
+**Plazos y honestidad.** Todo lleva `context` con plazo, la descarga se corta
+por `LimitReader`, y el `User-Agent` identifica al bot con su repositorio: no se
+hace pasar por un navegador.
+
+**Pruebas (10 nuevas).** Respuestas reales recortadas como fixtures, más casos
+de tope, contenido que no es audio, plazo agotado y fuente caída. El banco de
+pruebas es `cmd/shin-musica`:
+
+```sh
+go run ./cmd/shin-musica buscar "lofi"
+go run ./cmd/shin-musica bajar  "chill instrumental" -o /tmp/x.mp3
+```
+
+**Verificación real (desde una IP de datacenter, la peor para estas pruebas):**
+
+```
+bajando: CITY INSTRUMENTAL chill — iconoschill (3:30) · fuente audius
+  8387658 bytes (8.00 MB) en 1.279s · 6405 KB/s
+  cabecera: MP3 con etiqueta ID3 ✓
+```
+
+`file(1)` lo confirma: `Audio file with ID3 version 2.4.0, contains: MPEG ADTS,
+layer III, v1, 320 kbps, 48 kHz, Stereo`.
+
+## 38. Imagen de ejecución (`deploy/sandbox`)
+
+`Dockerfile` multi-etapa: compila con CGO desactivado (SQLite es Go puro) y la
+imagen final solo lleva el binario, ffmpeg y certificados, corriendo como
+usuario sin privilegios. Medido: binario estático de **19 MB**, frente a los
+~700 MB del toolchain. `docker-compose.yml` trae dos servicios: `shin` (el bot)
+y `musica` (el banco de pruebas), compartiendo el volumen de la sesión.

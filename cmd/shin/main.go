@@ -21,12 +21,13 @@ import (
 
 	"shin-go/internal/bot"
 	"shin-go/internal/config"
+	"shin-go/internal/red"
 	"shin-go/internal/store"
 	"shin-go/internal/wa"
 	"shin-go/internal/xlog"
 )
 
-var version = "0.8.1"
+var version = "0.9.0"
 
 func main() {
 	var (
@@ -100,6 +101,12 @@ func main() {
 	// eventos de uno en uno: sin esto, un `.sticker` de vídeo (descarga +
 	// ffmpeg + subida) dejaba al bot sordo hasta un minuto y los mensajes se
 	// apilaban en su cola interna hasta descartarse.
+	// Direcciones propias: si hay RED_PREFIJO, el tráfico saliente del bot se
+	// reparte entre las direcciones del bloque. Sin prefijo, todo sigue igual.
+	if r := prepararRed(cfg, log); r != nil {
+		bot.SetRed(r)
+	}
+
 	despachador := bot.NewDispatcher(router.Handle, cfg.Workers, cfg.QueueSize, log)
 	despachador.Start(ctx)
 	defer despachador.Close()
@@ -133,4 +140,25 @@ func main() {
 	log.Ok("Shin-MD en marcha. Ctrl+C para salir.")
 	<-ctx.Done()
 	log.Info("Cerrando limpio…")
+}
+
+// prepararRed monta el rotador de direcciones si hay prefijo configurado.
+//
+// Un prefijo mal escrito no tumba el bot: se avisa y se sigue saliendo por la
+// dirección del sistema, que es lo que hacía antes de existir esta opción.
+func prepararRed(cfg config.Config, log *xlog.Logger) *red.Rotador {
+	if cfg.RedPrefijo == "" {
+		return nil
+	}
+	r, err := red.Nuevo(cfg.RedPrefijo, red.Opciones{
+		MaxPorIP: cfg.RedPorIP,
+		Ventana:  cfg.RedVentana,
+	})
+	if err != nil {
+		log.Warn("RED_PREFIJO no se pudo usar: " + err.Error())
+		return nil
+	}
+	log.Info(fmt.Sprintf("Red propia: %s · %d direcciones · %d peticiones por dirección cada %s",
+		r.Prefijo(), r.Usables(), cfg.RedPorIP, cfg.RedVentana))
+	return r
 }
