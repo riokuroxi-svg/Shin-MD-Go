@@ -237,6 +237,16 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   manda el primer fotograma en PNG.
   *Verificación:* `go test ./...` → 215 pruebas. Detalle en
   **[docs/STICKERS.md](STICKERS.md)**.
+- **B5.1 · Utilidades sin API ajena** ✅ *hecho (0.12.0)*
+  `.qr` `.morse` `.demorse` `.recordar` (+`lista`, `.olvidar`) `.say`
+  `.encuesta` `.pfp` `.wastalk` `.readviewonce` `.get`.
+  El QR se dibuja en el binario (el JS llamaba a `api.qrserver.com`), los
+  recordatorios viven en **SQLite** (migración 14) y no en un `setTimeout` que
+  se pierde al reiniciar, y `.encuesta` hace encuesta, **quiz** y voto múltiple
+  nativos. `.get` es solo del dueño y lleva filtro anti-SSRF con resolutor de
+  DNS y sin seguir redirecciones.
+  *Verificación:* `go test ./...` → 347 pruebas (1 se salta si no hay ffmpeg).
+  Detalle en **[docs/UTILIDADES.md](UTILIDADES.md)**.
 - **B7.0 · Operación y estado** ✅ *hecho (0.11.0)*
   `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart`
   `.update` `.subir` `.cache` `.shell` `.setmenu`, con el anillo de errores de
@@ -246,6 +256,9 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   `.ex`/`.e` **no se portan**: no hay JavaScript que ejecutar en un binario.
   *Verificación:* `go test ./...` → 310 pruebas, `-race` verde. Detalle en
   **[docs/OPERACION.md](OPERACION.md)**.
+- **B5.2 · Utilidades con API ajena** (segunda tanda): traducir, tts, acortar,
+  tourl, hd, carbon, crypto, letra, toimg, gitclone, githubstalk, ptv, benchdl
+  y `.ai`. Se hace **después** de comprobar que cada API sigue viva.
 - **B6 · Descargas**
   aquí decides A o B (ver §5). `play`, `yt`, `tiktok`, `ig`, `fb`, `x`.
 - **B7 · Panel web + operación**

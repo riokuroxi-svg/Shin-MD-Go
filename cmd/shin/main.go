@@ -27,7 +27,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.11.0"
+var version = "0.12.0"
 
 func main() {
 	var (
@@ -106,6 +106,10 @@ func main() {
 	if r := prepararRed(cfg, log); r != nil {
 		bot.SetRed(r)
 	}
+
+	// El vigilante de recordatorios necesita la base y el cliente: sin esto,
+	// `.recordar` guardaría el aviso y nadie lo mandaría nunca.
+	cmds.SetReferencia(db, client, log, ctx)
 
 	despachador := bot.NewDispatcher(router.Handle, cfg.Workers, cfg.QueueSize, log)
 	despachador.Start(ctx)

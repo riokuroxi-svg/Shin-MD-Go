@@ -181,6 +181,19 @@ var migrations = [][]string{
 		`ALTER TABLE users ADD COLUMN afk INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE users ADD COLUMN afk_reason TEXT NOT NULL DEFAULT '';`,
 		`ALTER TABLE users ADD COLUMN used_commands INTEGER NOT NULL DEFAULT 0;`},
+	// 14) Recordatorios (`.recordar`). En el JS eran setTimeout en un array
+	// global: un reinicio se los llevaba sin avisar. Aquí son filas y un
+	// vigilante las revisa; `cuando_ms` es el instante del aviso.
+	{`CREATE TABLE IF NOT EXISTS recordatorios (
+		id        INTEGER PRIMARY KEY AUTOINCREMENT,
+		chat_id   TEXT    NOT NULL,
+		user_id   TEXT    NOT NULL,
+		texto     TEXT    NOT NULL,
+		cuando_ms INTEGER NOT NULL,
+		creado_ms INTEGER NOT NULL
+	);`,
+		`CREATE INDEX IF NOT EXISTS recordatorios_cuando ON recordatorios(cuando_ms);`,
+		`CREATE INDEX IF NOT EXISTS recordatorios_dueño ON recordatorios(chat_id, user_id);`},
 }
 
 func Open(path string) (*Store, error) {

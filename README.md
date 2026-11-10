@@ -41,7 +41,7 @@ El motor anti-ban está portado **1:1** (misma huella: σ 0.25 · base 1200 ms �
 warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD según el
 [NOTICE](NOTICE).
 
-## Estado actual — bloques B0 y B1 ✅
+## Estado actual — bloques B0 a B5.1 y B7.0 ✅
 
 | Bloque | Qué incluye | Estado |
 |---|---|---|
@@ -51,10 +51,14 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B2 · Menús y meta** | `.fax` (menú en imagen dibujada en Go), `.info`, `.owner`, `.report`, menú con imagen | ✅ **hecho** |
 | **B4 · Grupos y admin** | warns con límite y expulsión automática, `.kick` `.promote` `.demote`, abrir/cerrar, enlace y su restablecimiento, `.tagall`/`.hidetag`, info y datos del grupo, bienvenida y despedida, `.antistatus`, conteo de actividad, `.bot on/off` | ✅ **hecho** ([docs/GRUPOS.md](docs/GRUPOS.md)) |
 | **B3 · Economía, perfil y gacha** | `.work` `.daily` `.weekly` `.monthly`, banco (`.deposit` `.withdraw`), `.pay`, `.balance`, `.economyboard`, `.shop`, `.inventory`, `.economy on/off` y **gacha** (`.roll` `.claim` `.harem` `.setfav`) con migración de los datos del bot de JS | ✅ **hecho** ([docs/ECONOMIA.md](docs/ECONOMIA.md)) |
-| B4 · Grupos y admin | warns, kick/promote, mute, horario, antistatus (el antilink ya entró en B1) | ⬜ |
-| B5 · Stickers y media | sticker/toimg/tovid con `ffmpeg`, EXIF de sticker en Go | ⬜ |
+| **B3.1 · Perfil, nivel y matrimonio** | `.profile` `.level` `.lboard`, ficha editable, `.marry`/`.acepto`/`.divorce`, AFK con recompensa, **una sola curva de XP** | ✅ **hecho** ([docs/PERFIL.md](docs/PERFIL.md)) |
+| **B4.1 · Juegos de azar** | `.coinflip` `.slot` `.roulette` `.casino` `.ppt` y las salidas de riesgo, con probabilidades recalculadas | ✅ **hecho** ([docs/JUEGOS.md](docs/JUEGOS.md)) |
+| **B5 · Stickers y media** | `.sticker` (13 formas, 14 efectos), `.toimg`, `.stickerinfo`, EXIF propio en Go, vídeo local con `ffmpeg` | ✅ **hecho** ([docs/STICKERS.md](docs/STICKERS.md)) |
+| **B5.1 · Utilidades (1/2)** | `.qr` `.morse` `.demorse` `.recordar` `.olvidar` `.say` `.encuesta` `.pfp` `.wastalk` `.readviewonce` `.get`, encuestas y quiz nativos, recordatorios que sobreviven al reinicio | ✅ **hecho** ([docs/UTILIDADES.md](docs/UTILIDADES.md)) |
+| **B7.0 · Operación y estado** | `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart` `.update` `.subir` `.cache` `.shell` `.setmenu` | ✅ **hecho** ([docs/OPERACION.md](docs/OPERACION.md)) |
+| B5.2 · Utilidades (2/2) | `.traducir` `.tts` `.acortar` `.tourl` `.hd` `.carbon` `.crypto` `.letra` `.toimg` `.gitclone` `.githubstalk` `.ptv` `.benchdl`, `.ai` | ⬜ (depende de APIs de terceros) |
 | B6 · Descargas | play/yt/tiktok/ig/fb/x (decidir: Go puro o microservicio Node) | ⬜ |
-| B7 · Panel web + operación | `/health`, rotación de logs, unidad `systemd` | ⬜ |
+| B7 · Panel web | `/health`, `/queue`, `/memoria`, rotación de logs, unidad `systemd` | ⬜ |
 | B8 · Paridad de pruebas | portar las 161 pruebas del JS y sumar las nuevas | ⬜ |
 
 Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
@@ -249,11 +253,14 @@ Shin-MD-Go/
 │   ├── wa/                   cliente, cola anti-ban, parseo, envíos, LID
 │   ├── bot/                  router, hooks, permisos de grupo, owners
 │   ├── gacha/                catálogo de personajes e ilustraciones
+│   ├── utilidades/           morse, QR dibujado en Go, parser de encuestas,
+│   │                         filtro anti-SSRF para `.get`
 │   └── store/                SQLite puro Go (economía por chat, rachas, gacha,
-│                             advertencias y actividad de grupo)
+│                             advertencias y actividad de grupo, recordatorios)
 ├── docs/                     MIGRACION.md (plan) · BOTONES.md (catálogo)
 │                             ECONOMIA.md · GRUPOS.md · CAMBIOS.md · LID.md
-│                             SEGURIDAD.md
+│                             SEGURIDAD.md · UTILIDADES.md · PERFIL.md
+│                             JUEGOS.md · STICKERS.md · OPERACION.md
 └── Makefile
 ```
 
@@ -262,13 +269,16 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 226 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 347 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
                  # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
                  # advertencias y actividad de grupo, juegos de azar (probabilidad
                  # de ruleta, tragaperras y casino, y topes de las apuestas),
                  # stickers (EXIF, formas, filtros y conversión con ffmpeg),
-                 # repartidor de mensajes (paralelo, cola con techo, cierres)
+                 # repartidor de mensajes (paralelo, cola con techo, cierres),
+                 # utilidades (morse ida y vuelta, QR y su PNG, parser de
+                 # encuesta/quiz/multi, el protobuf que se envía, filtro anti-SSRF)
+                 # (la única que se salta sola es la de vídeo, si no hay ffmpeg)
 go test -race ./...   # lo mismo con el detector de carreras: los 8 paquetes en verde
 go vet ./...     # limpio
 gofmt -l .       # limpio
@@ -278,6 +288,15 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.12.0** — bloque B5.1: **utilidades sin API ajena**. `.qr` (el QR se dibuja
+  dentro del binario: el JS lo pedía a `api.qrserver.com`, así que sin internet
+  el de antes no funcionaba), `.morse`/`.demorse`, `.recordar` + `.olvidar` con
+  **recordatorios en SQLite** que sobreviven al reinicio (el JS usaba `setTimeout`
+  y se los comía una caída), `.say`, `.encuesta` con **encuesta, quiz y voto
+  múltiple nativos** (`PollCreationMessage` armado a mano porque el helper de
+  whatsmeow no expone `PollType` ni `CorrectAnswer`), `.pfp`, `.wastalk`,
+  `.readviewonce` y `.get` con filtro anti-SSRF. Detalle en
+  **[docs/UTILIDADES.md](docs/UTILIDADES.md)**.
 - **0.11.0** — bloque B7.0: **operación desde el chat**. `.health` (RAM,
   uptime, ffmpeg/yt-dlp, filas de la base, tope de la cola y últimos errores),
   `.runtime`, `.warmup`, `.infobot`, `.compat` (cuatro mensajes de prueba para

@@ -946,3 +946,124 @@ tenerlo. El caso de uso real («probar algo rápido en el servidor») lo cubre
 El `.update` del JS recargaba los módulos con `import(?update=…)`; aquí el flujo
 es `.update` → recompilar → `.restart`, y el mensaje lo dice en vez de aparentar
 una recarga que no ocurrió.
+
+---
+
+# Cambios 0.12.0 — bloque B5.1 (utilidades sin API ajena)
+
+_Port de `cmds/utils/` (primera tanda) · 8-nov-2026_
+_`go build`, `go vet`, `gofmt -l .` limpios; `go test ./...` → 347 pruebas
+(una se salta sola si no hay `ffmpeg` en la máquina)._
+
+---
+
+## 49. El QR dependía de una API que puede no responder
+
+**Síntoma (JS):** `.qr` montaba la URL de `api.qrserver.com` y mandaba la imagen
+que devolviera. Sin internet para ese dominio —o con el servicio caído— el
+comando no daba ni un QR ni un error claro: un mensaje con el enlace roto.
+
+**Arreglo:** el QR se calcula y se dibuja dentro del binario con `rsc.io/qr`
+(BSD-3), PNG de 640 px en grises y **4 módulos de zona de silencio**. Tope de
+1200 bytes de contenido: más que eso y WhatsApp reescala la imagen hasta que
+ningún lector la reconoce.
+
+**Pruebas:** `TestImagenQR*` (firma y tamaño de PNG, silencio, rechazos).
+
+---
+
+## 50. Los recordatorios se perdían en cada reinicio
+
+**Síntoma (JS):** `global.ginkoRecordatorios` con `setTimeout`. Un reinicio, un
+`reload` del plugin o un crash y el aviso **desaparecía sin decir nada**: quien
+lo programó se enteraba al no recibirlo.
+
+**Arreglo:** tabla `recordatorios` (**migración 14**) y un vigilante único que
+revisa cada 20 s. `RecordatoriosVencidos` **selecciona y borra en la misma
+transacción**, así que un aviso que ya salió no puede salir dos veces aunque el
+proceso muera en medio. Los avisos van con prioridad alta (llegan tarde por
+definición) y hay limpieza de vencidos de más de 7 días.
+
+**Detalle que faltaba:** el JS ofrecía un botón «Mis recordatorios» pero **no
+tenía comando de borrado ni de lista**. Aquí existe `.recordar lista` y
+`.olvidar <número>` (solo el dueño del aviso: el `DELETE` filtra por usuario).
+
+**Pruebas:** `internal/store/recordatorios_test.go` (6) — vence una sola vez,
+un futuro no vence, solo el dueño borra, orden por cuándo, rechaza vacíos,
+limpieza.
+
+---
+
+## 51. Las encuestas no podían ser quiz (y casi nadie se enteró)
+
+**Lo que se suponía:** que whatsmeow no permite quiz nativo porque
+`BuildPollCreation` no expone la respuesta correcta.
+
+**Lo que hay:** el proto `waE2E.PollCreationMessage` **sí** trae `PollType` y
+`CorrectAnswer`. Lo que no los expone es el helper. Como `SendProto` (ya en
+`internal/wa`) manda un `waE2E.Message` cualquiera por la cola anti-ban, el quiz
+se arma a mano: `PollType_QUIZ` y `CorrectAnswer` apuntando **a la misma
+estructura de opción** que va en la lista (copiarla no sirve: WhatsApp la
+rechaza).
+
+**El `MessageSecret` de 32 bytes es obligatorio.** Sin él la encuesta se ve, la
+gente vota y **los votos no se pueden descifrar**: nadie se entera, porque no hay
+error. Se genera con `crypto/rand` y hay dos pruebas encima.
+
+**Pruebas:** `cmds/utilidades_test.go` — normal, quiz (con el puntero
+compartido), `multi`, y 20 encuestas seguidas con secretos distintos.
+
+---
+
+## 52. `.get` podía pedir la red interna del servidor
+
+**Síntoma:** un comando que hace `fetch(url)` con la URL que llega por WhatsApp
+es un SSRF con ruedas: `http://127.0.0.1:8080`, `http://192.168.1.1`, o
+`http://169.254.169.254` (metadatos de la nube, que en AWS regalan credenciales).
+Y el truco de siempre: un dominio público que **resuelve** a una IP privada, o
+un `302` desde un dominio legítimo hacia `127.0.0.1`.
+
+**Arreglo:** tres capas. `.get` es **`OwnerOnly`**; `ValidarURL` con
+`ResolverDNSIPs` bloquea loopback, privadas, enlace local, CGNAT `100.64/10`,
+multicast, credenciales dentro de la URL y **dominios que resuelven a esas IPs**;
+y el cliente HTTP **no sigue redirecciones** (`ErrUseLastResponse`). Más topes:
+5 MB, 20 s, texto recortado a 3000 caracteres.
+
+**Pruebas:** `TestValidarURL*` con un resolutor falso (nunca se consulta DNS real
+en las pruebas).
+
+---
+
+## 53. La foto de perfil no se podía bajar como las demás
+
+**Síntoma:** `whatsmeow.Client.Download(ctx, info)` donde `info` es
+`*types.ProfilePictureInfo` **no compila**: `missing method GetDirectPath`. Ese
+`Download` solo acepta un `DownloadableMessage` (imagen, vídeo, audio,
+documento).
+
+**Arreglo:** `FotoPerfil` pide la info con `existing=true` (así nunca se provoca
+una petición al contacto) y baja el binario con `http.Get` sobre `info.URL`, con
+tope de 8 MB y plazo de 20 s.
+
+---
+
+## 54. `VerifiedName` no siempre se puede leer
+
+**Síntoma:** `info.VerifiedName != nil` no implica que haya nombre: el nombre
+vive en `VerifiedName.Details.VerifiedName`, y el certificado puede venir sin
+detalles. Acceder a `Details` sin comprobarlo es un `nil panic` en producción,
+en el único comando que la mayoría de la gente usa para «espiar» un número.
+
+**Arreglo:** `nombreVerificado()` comprueba las dos capas y devuelve cadena
+vacía si no hay nada.
+
+---
+
+## 55. `.say` no podía firmar como el bot
+
+**Síntoma (JS):** `.say` reenviaba el texto tal cual, así que cualquiera podía
+escribir formato (`*texto*`, enlaces, menciones) y hacerlo pasar por un mensaje
+del bot.
+
+**Arreglo:** el texto pasa por `bot.Esc` y se recorta a 2000 caracteres. Sin
+texto, repite el mensaje citado; sin cita y sin texto, explica el formato.

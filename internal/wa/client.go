@@ -12,7 +12,10 @@ package wa
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -293,6 +296,119 @@ func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, cap
 		_, err := c.WA.SendMessage(ctx, chat, msg)
 		return err
 	})
+}
+
+// SendProto manda un mensaje ya construido (encuestas, catálogos, botones que
+// no pasan por la capa de ui…) y devuelve su id.
+//
+// Existe para no duplicar la cola anti-ban en cada tipo de mensaje: todo lo que
+// sale del bot pasa por `Queue.Do`, con o sin envoltorio.
+func (c *Client) SendProto(ctx context.Context, chat types.JID, msg *waE2E.Message, priority bool) (string, error) {
+	var id string
+	err := c.Queue.Do(ctx, 120, priority, func() error {
+		resp, err := c.WA.SendMessage(ctx, chat, msg)
+		if err != nil {
+			return err
+		}
+		id = resp.ID
+		return nil
+	})
+	return id, err
+}
+
+// SendDocument sube y manda un archivo con nombre. Lo usan `.get`, `.gitclone`
+// y todo lo que devuelve un archivo en vez de texto.
+func (c *Client) SendDocument(ctx context.Context, chat types.JID, data []byte, nombre, mimetype string, priority bool) error {
+	if mimetype == "" {
+		mimetype = "application/octet-stream"
+	}
+	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaDocument)
+	if err != nil {
+		return err
+	}
+	msg := &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+		URL:           proto.String(up.URL),
+		DirectPath:    proto.String(up.DirectPath),
+		MediaKey:      up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256,
+		FileSHA256:    up.FileSHA256,
+		FileLength:    proto.Uint64(up.FileLength),
+		Mimetype:      proto.String(mimetype),
+		FileName:      proto.String(nombre),
+		Title:         proto.String(nombre),
+	}}
+	return c.Queue.Do(ctx, 120, priority, func() error {
+		_, err := c.WA.SendMessage(ctx, chat, msg)
+		return err
+	})
+}
+
+// PerfilPublico devuelve lo que WhatsApp deja ver de alguien sin ser su
+// contacto: nombre verificado, estado (bio), foto y si la cuenta existe.
+func (c *Client) PerfilPublico(ctx context.Context, jid types.JID) (types.UserInfo, error) {
+	info, err := c.WA.GetUserInfo(ctx, []types.JID{jid.ToNonAD()})
+	if err != nil {
+		return types.UserInfo{}, err
+	}
+	return info[jid.ToNonAD()], nil
+}
+
+// FotoPerfil devuelve los bytes de la foto de perfil, o error si no tiene (o si
+// la tiene privada para este número).
+func (c *Client) FotoPerfil(ctx context.Context, jid types.JID, previa bool) ([]byte, error) {
+	info, err := c.WA.GetProfilePictureInfo(ctx, jid.ToNonAD(), &whatsmeow.GetProfilePictureParams{Preview: previa})
+	if err != nil {
+		return nil, err
+	}
+	if info == nil || info.URL == "" {
+		return nil, errors.New("esa persona no tiene foto de perfil visible")
+	}
+	// La URL de la foto es un enlace normal (así lo documenta whatsmeow), pero
+	// se baja con plazo y tope: es una descarga de red y no puede quedarse
+	// colgada ni traerse 200 MB.
+	return bajarURL(ctx, info.URL, 8<<20)
+}
+
+// bajarURL descarga con plazo y tope de tamaño. Se usa para las fotos de perfil
+// (whatsmeow devuelve una URL normal, no un mensaje descargable).
+func bajarURL(ctx context.Context, u string, max int64) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("el servidor respondió %s", resp.Status)
+	}
+	datos, err := io.ReadAll(io.LimitReader(resp.Body, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(datos)) > max {
+		return nil, fmt.Errorf("la imagen pasa de %d MB", max>>20)
+	}
+	return datos, nil
+}
+
+// ExisteEnWhatsApp dice si un número está registrado, consultando el servidor
+// (no la libreta del bot).
+func (c *Client) ExisteEnWhatsApp(ctx context.Context, telefono string) (types.JID, bool, error) {
+	res, err := c.WA.IsOnWhatsApp(ctx, []string{telefono})
+	if err != nil {
+		return types.JID{}, false, err
+	}
+	for _, r := range res {
+		if r.IsIn {
+			return r.JID, true, nil
+		}
+	}
+	return types.JID{}, false, nil
 }
 
 // Presence: "available" / "unavailable" / "composing" (como el JS).
