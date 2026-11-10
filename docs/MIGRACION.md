@@ -237,6 +237,15 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   manda el primer fotograma en PNG.
   *Verificación:* `go test ./...` → 215 pruebas. Detalle en
   **[docs/STICKERS.md](STICKERS.md)**.
+- **B7.0 · Operación y estado** ✅ *hecho (0.11.0)*
+  `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart`
+  `.update` `.subir` `.cache` `.shell` `.setmenu`, con el anillo de errores de
+  `internal/xlog` y los conteos de `store.Estadisticas`. `.restart` ya no deja
+  el bot apagado cuando no hay supervisor (se niega), `.subir` rechaza rutas
+  absolutas y cualquier `.git`, y `.shell` viene apagado (`OWNER_SHELL=1`).
+  `.ex`/`.e` **no se portan**: no hay JavaScript que ejecutar en un binario.
+  *Verificación:* `go test ./...` → 310 pruebas, `-race` verde. Detalle en
+  **[docs/OPERACION.md](OPERACION.md)**.
 - **B6 · Descargas**
   aquí decides A o B (ver §5). `play`, `yt`, `tiktok`, `ig`, `fb`, `x`.
 - **B7 · Panel web + operación**

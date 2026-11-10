@@ -54,8 +54,19 @@ func New(level string, w io.Writer) *Logger {
 func (l *Logger) Debug(m string) { l.Logger.Debug("◐ " + m) }
 func (l *Logger) Info(m string)  { l.Logger.Info("◑ " + m) }
 func (l *Logger) Ok(m string)    { l.Logger.Info("✓ " + m) }
-func (l *Logger) Warn(m string)  { l.Logger.Warn("⚠ " + m) }
-func (l *Logger) Err(m string)   { l.Logger.Error("✕ " + m) }
+
+// Warn y Err además guardan el mensaje en el anillo que lee `.health`: el log
+// del sistema no sirve cuando el bot se cae a las 3 de la mañana y lo único
+// que tienes a mano es WhatsApp.
+func (l *Logger) Warn(m string) {
+	Record("aviso", m)
+	l.Logger.Warn("⚠ " + m)
+}
+
+func (l *Logger) Err(m string) {
+	Record("error", m)
+	l.Logger.Error("✕ " + m)
+}
 
 // Ctx devuelve un logger hijo con datos del mensaje (equivalente a los
 // campos estructurados que ya manejas en pino/chalk).

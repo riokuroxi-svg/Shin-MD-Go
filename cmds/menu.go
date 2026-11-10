@@ -40,6 +40,15 @@ func init() {
 				return sendFax(c, "")
 			}
 
+			// El estilo elegido con .setmenu. La imagen manda sobre la
+			// variante: si alguien pidió el menú dibujado, se respeta.
+			switch varianteMenuActual(c) {
+			case 2:
+				return c.ReplyPriority(menuDeTexto(c, unique, aliases))
+			case 4:
+				return c.ReplyPriority(menuCompacto(c, unique, aliases))
+			}
+
 			body := fmt.Sprintf(
 				"╭─「 *%s* 」\n"+
 					"│ 反魂 · núcleo en Go\n"+
@@ -118,4 +127,55 @@ func menuCategory(c *bot.Context, cat string) error {
 	sb.WriteString("╰─")
 
 	return c.ReplyPriority(sb.String())
+}
+
+// menuDeTexto es la variante v2 (.setmenu v2): todo en un mensaje, sin botones.
+// Es la que funciona igual en un cliente viejo, en WhatsApp Web y en un
+// teléfono sin soporte de botones.
+func menuDeTexto(c *bot.Context, unicos, alias int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "╭─「 *%s* 」\n", bot.CleanName(c.Bot.Config().BotName, 24))
+	fmt.Fprintf(&b, "│ %d comandos · %d nombres\n", unicos, alias)
+	fmt.Fprintf(&b, "╰─ prefijos: %s\n", strings.Join(c.Bot.Prefixes(), " "))
+
+	cats := bot.ByCategory()
+	names := make([]string, 0, len(cats))
+	for cat := range cats {
+		names = append(names, string(cat))
+	}
+	sort.Strings(names)
+
+	for _, nombre := range names {
+		cmds := ordenDeComandos(cats[bot.Category(nombre)])
+		fmt.Fprintf(&b, "\n*── %s (%d) ──*\n", strings.ToUpper(nombre), len(cmds))
+		for _, cmd := range cmds {
+			fmt.Fprintf(&b, "│ %s%s — %s\n", c.Bot.FirstPrefix(), cmd.Name, cmd.Desc)
+		}
+	}
+	return b.String()
+}
+
+// menuCompacto es la variante v4 (.setmenu v4): cabecera corta, categorías con
+// su número y el estado del bot en una línea. Pensada para mirar de un vistazo.
+func menuCompacto(c *bot.Context, unicos, alias int) string {
+	snap := c.Bot.SendQueue().Snapshot()
+	cats := bot.ByCategory()
+
+	names := make([]string, 0, len(cats))
+	for cat := range cats {
+		names = append(names, string(cat))
+	}
+	sort.Strings(names)
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "《⊛》 *%s*\n", bot.CleanName(c.Bot.Config().BotName, 24))
+	fmt.Fprintf(&b, "◇ %d comandos · %d nombres · %d hooks\n", unicos, alias, bot.HookCount())
+	fmt.Fprintf(&b, "◇ Cola hoy › %d/%d · uptime %s\n", snap.SentToday, snap.Budget,
+		formatWait(int64(c.Bot.Uptime().Seconds())))
+	b.WriteString("╭───────────────────\n")
+	for _, nombre := range names {
+		fmt.Fprintf(&b, "│ ▸ *%s* (%d)\n", nombre, len(cats[bot.Category(nombre)]))
+	}
+	b.WriteString("╰─ escribe .menu <categoría>")
+	return b.String()
 }

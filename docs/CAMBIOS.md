@@ -864,3 +864,85 @@ Ninguna migración publicada se editó: los datos ya migrados no se tocan.
 **Pruebas:** `TestMigracionesSinEscalonesVacios` (ningún escalón vacío) y
 `TestColumnasDelPerfilEnLaBase`, que lee `pragma_table_info('users')` y
 comprueba que las columnas existen de verdad en el archivo, no solo en el código.
+
+---
+
+# Cambios 0.11.0 — bloque B7.0 (operación: estado y comandos de dueño)
+
+_Port de `cmds/main/*.js` y `cmds/owner/*.js` · 10-nov-2026_
+_`go build`, `go vet`, `gofmt -l .` limpios; `go test ./...` → 310 pruebas._
+
+---
+
+## 44. `.restart` podía dejar el bot apagado para siempre
+
+**Síntoma (JS):** con `npm start` no hay supervisor: el comando hacía
+`process.exit(0)` y el bot se quedaba muerto hasta que alguien mirara el
+teléfono.
+
+**Arreglo:** antes de salir se pregunta quién nos levanta otra vez.
+`caminoDeReinicio(haySupervisor, puedeExec)` devuelve `systemd`, `exec` o
+`sin-salida`, y en el último caso **no se sale**: se contesta que no se puede y
+cómo arreglarlo. Si el camino es `exec` y el hijo no arranca, el padre se queda
+vivo. Hay prueba de los cuatro casos.
+
+**Pruebas:** `TestCaminoDeReinicio`, `TestHaySupervisorPorEntorno`.
+
+---
+
+## 45. `.subir` escribía donde le dijeran
+
+**Síntoma:** el candado del JS era una comprobación de prefijo sobre la ruta ya
+resuelta; funcionaba, pero dejaba casos raros: rutas absolutas que acababan
+escritas dentro del repo, un `.git` anidado de un submódulo que no estaba
+protegido y una carpeta hermana con el mismo prefijo (`bot-otro`).
+
+**Arreglo:** `rutaSegura()` rechaza rutas absolutas, byte nulo, cualquier
+componente `.git` (no solo el de la raíz) y compara con el **separador**
+incluido, así que `bot-otro` no se confunde con `bot`. Nueve rutas malas y cinco
+buenas en la prueba.
+
+**Pruebas:** `TestRutaSeguraAceptaDentroDelRepo`, `TestRutaSeguraRechazaEscapes`,
+`TestRutaSeguraNoConfundePrefijos`.
+
+---
+
+## 46. Los errores solo existían en el log del sistema
+
+**Síntoma:** el JS tenía un módulo de diagnóstico y el dueño podía preguntar
+«¿qué se rompió?» por WhatsApp. En el port, un fallo solo aparecía en el log del
+servidor: desde el móvil, invisible.
+
+**Arreglo:** `internal/xlog` gana un anillo de 64 avisos/errores alimentado por
+`Warn` y `Err` (sin tocar ni un `c.Log.Warn` del resto del código).
+`ContarErrores()` es el total desde el arranque; `.health clear` lo vacía (solo
+el dueño). Los mensajes se recortan a 300 caracteres y el anillo no crece: si
+algo falla en bucle no se come la RAM.
+
+**Pruebas:** `internal/xlog/errores_test.go` (5).
+
+---
+
+## 47. `.health` contaba usuarios cargando la base entera
+
+**Síntoma (JS):** `db.getUser().length` y `db.getChat().length`: para saber
+cuánta gente hay se cargaba todo el JSON en memoria.
+
+**Arreglo:** `store.Estadisticas()` son tres `COUNT(*)` y un `stat`. El tamaño
+incluye `-wal` y `-shm`, que es justo lo que se olvida al mirar el disco (el WAL
+puede ser más grande que la base).
+
+**Pruebas:** `TestEstadisticasCuenta`.
+
+---
+
+## 48. `.ex` no existe y no se finge que existe
+
+El `.ex`/`.e` del JS ejecutaba JavaScript dentro del bot. En un binario Go no hay
+equivalente, y meter un intérprete de JS solo para eso sería peor que no
+tenerlo. El caso de uso real («probar algo rápido en el servidor») lo cubre
+`.shell`, que viene **apagado** y se enciende con `OWNER_SHELL=1`.
+
+El `.update` del JS recargaba los módulos con `import(?update=…)`; aquí el flujo
+es `.update` → recompilar → `.restart`, y el mensaje lo dice en vez de aparentar
+una recarga que no ocurrió.

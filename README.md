@@ -278,6 +278,12 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.11.0** — bloque B7.0: **operación desde el chat**. `.health` (RAM,
+  uptime, ffmpeg/yt-dlp, filas de la base, tope de la cola y últimos errores),
+  `.runtime`, `.warmup`, `.infobot`, `.compat` (cuatro mensajes de prueba para
+  saber qué no lee tu cliente), `.allmenu`, `.restart`, `.update`, `.subir`,
+  `.cache`, `.shell` y `.setmenu`. `.restart` ya no puede dejar el bot apagado y
+  `.shell` viene apagado. Detalle en **[docs/OPERACION.md](docs/OPERACION.md)**.
 - **0.10.0** — bloque B3.1: **perfil, nivel y matrimonio**. `.profile`,
   `.level`, `.lboard`, la edición de la ficha (`.setdesc`, `.setgenre`,
   `.sethobby`, `.setbirth` y sus borrados), `.marry`/`.acepto`/`.divorce` y el
