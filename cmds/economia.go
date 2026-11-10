@@ -92,7 +92,6 @@ func init() {
 	registerBoard()
 	registerShop()
 	registerEconomyToggle()
-	registerPerfil()
 }
 
 // ─── premios (números del JS, en un solo sitio) ─────────────────────────────
@@ -795,52 +794,6 @@ func registerEconomyToggle() {
 				return c.Reply(fmt.Sprintf("《✧》 Usa *%seconomy on* o *%seconomy off*",
 					c.Bot.FirstPrefix(), c.Bot.FirstPrefix()))
 			}
-		},
-	})
-}
-
-// ─── .perfil ────────────────────────────────────────────────────────────────
-
-func registerPerfil() {
-	bot.Register(bot.Command{
-		Name:     "perfil",
-		Aliases:  []string{"profile", "yo"},
-		Category: bot.CatPerfil,
-		Desc:     "Tu perfil y economía",
-		Cooldown: 2,
-		Run: func(c *bot.Context) error {
-			key := c.Key()
-			acc, err := c.DB.ChatUser(c.Ctx, chatID(c), key)
-			if err != nil {
-				return err
-			}
-			global, err := c.DB.Get(c.Ctx, key)
-			if err != nil {
-				return err
-			}
-			dias, err := c.DB.StreakValue(c.Ctx, key, store.StreakDaily)
-			if err != nil {
-				return err
-			}
-			semanas, err := c.DB.StreakValue(c.Ctx, key, store.StreakWeekly)
-			if err != nil {
-				return err
-			}
-
-			nombre := c.PushName
-			if nombre == "" {
-				nombre = strings.SplitN(key, "@", 2)[0]
-			}
-			daily := "disponible ✓"
-			if time.Now().UnixMilli() < acc.LastDaily {
-				daily = "ya reclamado · " + formatWait((acc.LastDaily-time.Now().UnixMilli())/1000)
-			}
-			return c.Reply(fmt.Sprintf(
-				"╭─「 *PERFIL* 」\n│ 👤 %s\n│ 💰 Cartera: %s\n│ 🏦 Banco: %s\n"+
-					"│ 🧮 Total: %s\n│ ⭐ Nivel: %d (%d XP)\n│ 🔥 Racha: %d días · %d semanas\n"+
-					"│ 🎁 Daily: %s\n╰─",
-				nombre, money(c, acc.Coins), money(c, acc.Bank), money(c, acc.Total()),
-				global.Level, global.XP, dias, semanas, daily))
 		},
 	})
 }

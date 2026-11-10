@@ -144,7 +144,7 @@ el mensaje ni lo decía. Aquí la rotura es una probabilidad explícita (8 % ca�
 **`.robar`** era el comando más roto del JS: solo dejaba robar a quien llevaba
 "1 hora inactivo", pero esa hora salía de un campo (`lastCmd`) que no existía —
 la condición nunca se cumplía y nunca se podía robar a nadie. Aquí el límite es
-por **víctima** (`last_robbed`, migración 12): nadie puede ser robado dos veces
+por **víctima** (`last_robbed`, migración 10): nadie puede ser robado dos veces
 en la misma hora, y el robo se hace con una transacción que nunca deja a la
 víctima en negativo (`Steal()`), así que lo robado puede ser menos de lo pedido
 si esa persona se gastó el dinero en el mismo segundo.

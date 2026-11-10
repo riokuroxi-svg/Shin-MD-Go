@@ -745,3 +745,122 @@ imagen final solo lleva el binario, ffmpeg y certificados, corriendo como
 usuario sin privilegios. Medido: binario estático de **19 MB**, frente a los
 ~700 MB del toolchain. `docker-compose.yml` trae dos servicios: `shin` (el bot)
 y `musica` (el banco de pruebas), compartiendo el volumen de la sesión.
+
+---
+
+# Cambios 0.10.0 — bloque B3.1 (perfil, nivel y matrimonio)
+
+_Port de `cmds/profile/*.js` · 10-nov-2026_
+_`go build`, `go vet`, `gofmt -l .` limpios; `go test ./...` → 290 pruebas;
+`go test -race -count=1` verde en los tres paquetes que toca esta ronda._
+
+---
+
+## 39. Había tres curvas de XP y el nivel no cuadraba consigo mismo
+
+**Síntoma:** el nivel que enseñaba `.level` no era el que enseñaba `.profile`, y
+el que guardaba la base era un tercero. En `.lboard` aparecía gente de nivel 0
+que nunca había escrito.
+
+**Raíz:** tres fórmulas para lo mismo, en tres sitios:
+
+```js
+// src/lib/xp.js — la de .level
+const CRECIMIENTO_LEVEL = (Math.PI / Math.E) ** 1.618 * Math.E * 0.75
+// cmds/profile/profile.js — la del perfil
+const CRECIMIENTO = (Math.PI / Math.E) ** 1.618 * Math.E * 0.75
+// el almacén, al dar XP
+level = Math.floor(xp / (level * 100))   // ← nada que ver con las otras dos
+```
+
+Las dos primeras eran la misma expresión con dos nombres: bastaba tocar una para
+que los dos comandos dijeran cosas distintas. La tercera, escondida en el
+almacén, es la que fijaba el nivel real.
+
+**Arreglo:** una sola curva, en `internal/xp/xp.go`, y el almacén la usa a ella
+(`AddXP` → `xp.NivelPara`). Tramos contiguos por construcción
+(`Min(n+1) == Max(n)+1`), tope de 10 000 niveles y niveles que **empiezan en 1**
+(antes la cuenta nacía en 0 y el primer mensaje la subía sin explicación).
+
+**Pruebas:** `internal/xp/xp_test.go` (7) y `TestNivelCoherenteConLaCurva` en el
+almacén, que da XP a mano y compara el nivel guardado con el que dice la curva.
+
+---
+
+## 40. `.marry` casaba a dos personas sin que la segunda escribiera nada
+
+**Síntoma:** gente casada sin haber aceptado nada; para deshacerlo había que
+convencer al otro de que escribiera `.divorce`.
+
+**Raíz:** en `cmds/profile/marry.js` la primera llamada **solo proponía**, pero
+la confirmación era volver a escribir `.marry` con el nombre del otro. Si dos
+personas se mencionaban en el mismo grupo, el estado se cerraba sin permiso
+explícito; y la escritura eran dos `setUser` seguidos, así que un corte entre
+ambos dejaba a una casada y a la otra no.
+
+**Arreglo:** propuesta → aceptación (`.acepto` o `.marry` de vuelta, que es como
+se confirmaba en el JS y la gente ya conoce), caducidad de 10 minutos, un solo
+uso, y el matrimonio en **una transacción** (`Casarse`). Las propuestas viven en
+memoria con mutex: los handlers corren en goroutines y un `map` sin candado en
+Go no da error, tumba el proceso.
+
+**Pruebas:** `TestPropuestaDeUnSoloUso`, `TestPropuestaCaduca`,
+`TestPropuestaReemplazaLaAnterior`, `TestCasarseYDivorciarse` (con `-race`).
+
+---
+
+## 41. El AFK no pagaba nada (y en el JS sí)
+
+**Síntoma:** al volver del modo ausente, el bot solo decía «volvió». En el bot
+viejo pagaba por el tiempo ausente.
+
+**Raíz:** el pago vivía en `cmds/profile/afktime.js`, un gancho `before` que no
+se portó cuando se hizo el hook de AFK del bloque B1. Además la marca de «desde
+cuándo» se guardaba como texto (`02/01 15:04`), y con texto no se puede calcular
+un tiempo.
+
+**Arreglo:** la marca pasa a guardarse en milisegundos (se sigue mostrando con
+el mismo formato de antes) y `recompensaAFK()` aplica la regla del JS —8 monedas
+por minuto y un bono al azar de 300 a 1500 cada 3 horas— con el reloj como
+parámetro. Si la marca no se entiende o está en el futuro, **no se paga**: mejor
+cero que inventar dinero.
+
+**Pruebas:** `cmds/proteccion_test.go` (recompensa por tramos, marca ilegible,
+reloj hacia atrás, formato de fecha).
+
+---
+
+## 42. Dos comandos peleándose por el mismo nombre (`setdesc`)
+
+**Síntoma:** `go test ./cmds` falló al añadir el perfil con
+`el nombre "setdesc" lo usan "setgpdesc" y "setdesc"`.
+
+**Raíz:** al portar los grupos se le puso el alias `setdesc` a `.setgpdesc`,
+pero en el JS `setdesc` es **la descripción del perfil** (`cmds/profile/setdesc.js`)
+y el comando de grupo es solo `setgpdesc`. El primero que se registra gana, así
+que la descripción del grupo habría quedado inalcanzable para siempre.
+
+**Arreglo:** el alias vuelve a donde estaba en el JS. La prueba
+`TestSinAliasRepetidos` (ya existente) es la que lo detectó; ahora también hay
+`TestComandosDePerfilRegistrados` para los 14 comandos del bloque.
+
+---
+
+## 43. Las migraciones estaban numeradas de mentira
+
+**Síntoma:** los comentarios decían «migración 11» a tres escalones distintos y
+la documentación de los juegos hablaba de la 12 cuando la de los juegos era la
+10.
+
+**Raíz:** los números de los comentarios se escribieron a mano y se quedaron
+viejos al insertar escalones en medio. El número real es la **posición** en la
+lista, así que la documentación mentía.
+
+**Arreglo:** renumerados los comentarios de `internal/store/db.go` según su
+posición real (juegos 10, grupos 11, rolls 12, perfil **13**) y corregidas las
+tres referencias en `docs/ECONOMIA.md`, `docs/JUEGOS.md` y `docs/MIGRACION.md`.
+Ninguna migración publicada se editó: los datos ya migrados no se tocan.
+
+**Pruebas:** `TestMigracionesSinEscalonesVacios` (ningún escalón vacío) y
+`TestColumnasDelPerfilEnLaBase`, que lee `pragma_table_info('users')` y
+comprueba que las columnas existen de verdad en el archivo, no solo en el código.

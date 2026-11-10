@@ -196,6 +196,17 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   2 000–4 000 cada 3 min. Migración de datos en **docs/ECONOMIA.md**.
   *Verificación:* `go test ./...` → 150 pruebas (incluye concurrencia real de
   dinero y de reclamos sobre SQLite).
+- **B3.1 · Perfil, nivel y matrimonio** ✅ *hecho (0.10.0)*
+  `.profile` `.level` `.lboard`, `.setdesc` `.setgenre` `.sethobby` `.setbirth`
+  y sus cuatro borrados, `.marry` `.acepto` `.divorce`, `.afk` con la
+  recompensa de `afktime.js`. **Una sola curva de XP** (`internal/xp`): el JS
+  tenía tres fórmulas para lo mismo y el nivel del perfil no cuadraba con el de
+  `.level`. Los niveles empiezan en **1** (antes, una cuenta nueva nacía en 0).
+  La boda ya no se cierra sin permiso: hay propuesta, aceptación y caducidad;
+  en el JS `.marry @alguien` casaba a los dos en el acto, sin que la otra
+  persona escribiera nada. Columnas nuevas en `users` (**migración 13**).
+  *Verificación:* `go test ./...` → 290 pruebas, `-race` verde. Detalle en
+  **[docs/PERFIL.md](PERFIL.md)**.
 - **B4 · Grupos y admin** ✅ *hecho (0.6.0)*
   `.warn` `.warns` `.delwarn` `.setwarnlimit` (con expulsión automática),
   `.kick` `.promote` `.demote`, `.open` `.close` `.link` `.revoke`,
@@ -211,7 +222,7 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   `.coinflip` `.slot` `.roulette` `.casino` `.ppt` y las salidas de riesgo
   `.pescar` `.cazar` `.minar` `.mazmorra` `.aventura` `.ritual` `.crime`
   `.robar` `.cofre`, más `.heal` y `.pocion` (sobre la capa de economía de B3,
-  sin tablas nuevas: solo columnas de espera, migración 12).
+  sin tablas nuevas: solo columnas de espera, migración 10).
   Las probabilidades se recalcularon porque las del JS estaban rotas: la ruleta
   acertaba el 24 % pagando ×5 y el casino tiraba dados de 55 caras contra los
   101 del jugador. No se portó la partida "pendiente" de `.mine` (vivía 3

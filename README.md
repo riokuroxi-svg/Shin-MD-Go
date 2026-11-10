@@ -278,6 +278,13 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.10.0** — bloque B3.1: **perfil, nivel y matrimonio**. `.profile`,
+  `.level`, `.lboard`, la edición de la ficha (`.setdesc`, `.setgenre`,
+  `.sethobby`, `.setbirth` y sus borrados), `.marry`/`.acepto`/`.divorce` y el
+  AFK con recompensa. **Una sola curva de XP**: el JS tenía tres fórmulas para
+  lo mismo y el nivel de `.level` no coincidía con el de `.profile`. La boda ya
+  no se cierra sin permiso y el matrimonio se guarda en una transacción.
+  Detalle en **[docs/PERFIL.md](docs/PERFIL.md)**.
 - **0.8.1** — auditoría de concurrencia. Los mensajes se atienden en paralelo
   (4 gorutinas, cola con techo): antes, un `.sticker` de vídeo dejaba al bot
   sordo hasta un minuto porque whatsmeow entrega los eventos de uno en uno.

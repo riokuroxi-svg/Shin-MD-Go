@@ -274,7 +274,7 @@ Los comandos de riesgo (`coinflip`, `slot`, `roulette`, `casino`, `ppt`,
 `cofre`, `heal` y `pocion`) están en **B4.1** y se apoyan en esta misma capa:
 `Spend`, `AddCoins`, `ClaimCooldown`, `Charge`, `Steal`, `AddStat` y el
 inventario validado. No hay tablas nuevas de dinero, solo columnas de espera
-(migración 12).
+(migración 10).
 
 Sus números, sus probabilidades y las tres trampas que traía el JS (ruleta
 pagando de más, casino con dados cargados y tragaperras con devolución > 100 %)

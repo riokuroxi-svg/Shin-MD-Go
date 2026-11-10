@@ -9,6 +9,8 @@ package cmds
 
 import (
 	"fmt"
+	"math/rand/v2"
+	"strconv"
 	"strings"
 	"time"
 
@@ -91,15 +93,29 @@ func init() {
 			return false
 		}
 
-		// 1) el ausente habló → deja de estar ausente
-		if _, ok := afkOf(c, c.SenderKey); ok && parsed.Text != "" && !parsed.IsCommand {
+		// 1) el ausente habló → deja de estar ausente y cobra lo que juntó
+		if motivo, ok := afkOf(c, c.SenderKey); ok && parsed.Text != "" && !parsed.IsCommand {
 			_ = c.DB.SetSetting(c.Ctx, c.SenderKey, keyAFK, "")
-			desde := ""
-			if v, ok, _ := c.DB.GetSetting(c.Ctx, c.SenderKey, keyAFKSin); ok && v != "" {
-				desde = " (estabas ausente desde " + v + ")"
-			}
+			v, _, _ := c.DB.GetSetting(c.Ctx, c.SenderKey, keyAFKSin)
 			_ = c.DB.SetSetting(c.Ctx, c.SenderKey, keyAFKSin, "")
-			_ = c.Reply("👋 " + nombre(c) + " volvió" + desde + ". Bienvenido de nuevo.")
+
+			// La recompensa del JS: 8 monedas por minuto ausente, más un bono
+			// al azar por cada 3 horas. Va a la cartera de ESTE chat, igual
+			// que el resto de la economía.
+			coins, tiempo := recompensaAFK(v, time.Now())
+			if coins > 0 {
+				if _, err := c.DB.AddCoins(c.Ctx, c.Chat.String(), c.SenderKey, coins); err != nil {
+					c.Log.Warn("no se pudo pagar el afk: " + err.Error())
+					coins = 0
+				}
+			}
+			msg := "ꕥ " + nombre(c) + " dejó de estar ausente.\n" +
+				"> Motivo: *" + bot.Esc(motivo) + "*\n" +
+				"> Tiempo: *" + tiempo + "*"
+			if coins > 0 {
+				msg += "\n> Recompensa: *" + miles(coins) + "* monedas"
+			}
+			_ = c.Reply(msg)
 			return false // sigue con el mensaje: puede ser un comando
 		}
 
@@ -120,7 +136,9 @@ func init() {
 			if motivo, ok := afkOf(c, key); ok {
 				desde := ""
 				if v, ok, _ := c.DB.GetSetting(c.Ctx, key, keyAFKSin); ok && v != "" {
-					desde = " · desde " + v
+					if ms, err := strconv.ParseInt(v, 10, 64); err == nil {
+						desde = " · desde " + fechaCorta(ms)
+					}
 				}
 				avisos = append(avisos, fmt.Sprintf("💤 *%s* está ausente%s\n│ %s", shortJID(jid), desde, motivo))
 			}
@@ -189,7 +207,7 @@ func init() {
 	bot.Register(bot.Command{
 		Name:     "afk",
 		Aliases:  []string{"ausente", "away"},
-		Category: bot.CatUtils,
+		Category: bot.CatPerfil,
 		Desc:     "Marca que estás ausente (.afk motivo · .afk off para quitarlo)",
 		Run: func(c *bot.Context) error {
 			key := c.Key()
@@ -210,17 +228,19 @@ func init() {
 			// no pueda falsificar un aviso del bot.
 			motivo = bot.ClipText(motivo, 140)
 
-			desde := time.Now().UTC().Format("02/01 15:04")
+			// Se guarda el instante (ms), no el texto: al volver hay que saber
+			// cuánto tiempo pasó para pagar la recompensa (como el JS).
+			desde := time.Now().UnixMilli()
 			if err := c.DB.SetSetting(c.Ctx, key, keyAFK, motivo); err != nil {
 				return err
 			}
-			if err := c.DB.SetSetting(c.Ctx, key, keyAFKSin, desde); err != nil {
+			if err := c.DB.SetSetting(c.Ctx, key, keyAFKSin, strconv.FormatInt(desde, 10)); err != nil {
 				return err
 			}
 
 			return c.ReplyButtons(
 				"💤 Ausente",
-				"╭─「 *AFK* 」\n│ Motivo: "+motivo+"\n│ Desde: "+desde+"\n╰─ te aviso si te mencionan",
+				"╭─「 *AFK* 」\n│ Motivo: "+motivo+"\n│ Desde: "+fechaCorta(desde)+"\n╰─ te aviso si te mencionan",
 				"Escribe cualquier cosa para volver",
 				bot.QuickReply("🔓 Quitar AFK", "afk off"),
 			)
@@ -256,6 +276,35 @@ func nombre(c *bot.Context) string {
 		return "*" + n + "*"
 	}
 	return "*" + c.Sender.User + "*"
+}
+
+// fechaCorta formatea un instante en ms como «02/01 15:04» (UTC, como antes).
+func fechaCorta(ms int64) string {
+	return time.UnixMilli(ms).UTC().Format("02/01 15:04")
+}
+
+// recompensaAFK calcula lo que se lleva alguien al volver de estar ausente.
+//
+// Regla copiada del JS: 8 monedas por minuto ausente y un bono al azar de
+// 300–1500 por cada 3 horas. Se separa de la base y del reloj para poder
+// probarla sin WhatsApp; `ahora` entra como parámetro por lo mismo.
+//
+// Si la marca de tiempo no se entiende (base migrada, dato viejo) se devuelve
+// cero y «desconocido»: nunca se paga por un dato que no se pudo leer.
+func recompensaAFK(marca string, ahora time.Time) (int64, string) {
+	ms, err := strconv.ParseInt(strings.TrimSpace(marca), 10, 64)
+	if err != nil || ms <= 0 {
+		return 0, "desconocido"
+	}
+	pasado := ahora.Sub(time.UnixMilli(ms))
+	if pasado < 0 { // reloj movido hacia atrás: no hay tiempo que cobrar
+		return 0, "desconocido"
+	}
+	coins := int64(pasado.Minutes()) * 8
+	for i := int64(0); i < int64(pasado.Hours())/3; i++ {
+		coins += int64(300 + rand.IntN(1201)) // 300..1500, ambos incluidos
+	}
+	return coins, formatWait(int64(pasado.Seconds()))
 }
 
 // shortJID deja el número o el LID sin el dominio, para los avisos.

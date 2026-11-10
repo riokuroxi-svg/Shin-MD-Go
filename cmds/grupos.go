@@ -637,7 +637,7 @@ func registerGroupSettings() {
 	// .setgpdesc
 	bot.Register(bot.Command{
 		Name:      "setgpdesc",
-		Aliases:   []string{"descripciongrupo", "setdesc"},
+		Aliases:   []string{"descripciongrupo"},
 		Category:  bot.CatGroup,
 		Desc:      "Cambiar la descripción del grupo",
 		GroupOnly: true,

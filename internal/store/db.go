@@ -14,6 +14,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite" // driver "sqlite" en Go puro, sin cgo
+
+	"shin-go/internal/xp"
 )
 
 type Store struct{ db *sql.DB }
@@ -76,8 +78,8 @@ var migrations = [][]string{
 		PRIMARY KEY (chat_id, user_id)
 	);`,
 		`CREATE INDEX IF NOT EXISTS chat_users_board ON chat_users(chat_id, coins);`},
-	// 7) Rachas globales (una por persona, no por chat) y campos de perfil
-	// que en el JS viven en g_users.
+	// 7) Rachas globales (una por persona, no por chat): en el JS viven en la
+	// tabla g_users, la misma para todos los chats.
 	{`ALTER TABLE users ADD COLUMN streak INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE users ADD COLUMN last_daily_global INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE users ADD COLUMN weekly_streak INTEGER NOT NULL DEFAULT 0;`,
@@ -121,7 +123,7 @@ var migrations = [][]string{
 		PRIMARY KEY (chat_id, message_id)
 	);`,
 		`CREATE INDEX IF NOT EXISTS gacha_rolls_vigencia ON gacha_rolls(expires_at);`},
-	// 12) Juegos de azar (B4.1): enfriamientos propios. Van aparte de los de la
+	// 10) Juegos de azar (B4.1): enfriamientos propios. Van aparte de los de la
 	// economía para que un `.work` no bloquee un `.slot` ni al revés.
 	{`ALTER TABLE chat_users ADD COLUMN last_casino INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE chat_users ADD COLUMN last_dungeon INTEGER NOT NULL DEFAULT 0;`,
@@ -162,10 +164,23 @@ var migrations = [][]string{
 		PRIMARY KEY (chat_id, user_id, day)
 	);`,
 		`CREATE INDEX IF NOT EXISTS chat_activity_day ON chat_activity(chat_id, day);`},
-	// 10) Contador de rolls por persona y chat: el JS usaba el enfriamiento
+	// 12) Contador de rolls por persona y chat: el JS usaba el enfriamiento
 	// `lastRoll`, guardado como número absoluto dentro del JSON del usuario.
 	{`ALTER TABLE chat_users ADD COLUMN last_roll INTEGER NOT NULL DEFAULT 0;`,
 		`ALTER TABLE chat_users ADD COLUMN last_claim INTEGER NOT NULL DEFAULT 0;`},
+	// 13) Perfil global de la persona (en el JS vive en g_users, la misma tabla
+	// para todos los chats). Nombre, descripción, género, pasatiempo,
+	// cumpleaños y pareja son de la persona, no del grupo: casarse en un grupo
+	// te casa en todos, igual que en el bot viejo.
+	{`ALTER TABLE users ADD COLUMN name TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN description TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN genre TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN hobby TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN birth TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN marry TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN afk INTEGER NOT NULL DEFAULT 0;`,
+		`ALTER TABLE users ADD COLUMN afk_reason TEXT NOT NULL DEFAULT '';`,
+		`ALTER TABLE users ADD COLUMN used_commands INTEGER NOT NULL DEFAULT 0;`},
 }
 
 func Open(path string) (*Store, error) {
@@ -284,11 +299,10 @@ func (s *Store) AddXP(ctx context.Context, jid string, delta int64) (*Account, e
 	if acc.XP < 0 { // un coste mayor que la XP acumulada no debe dejar el nivel en negativo
 		acc.XP = 0
 	}
-	level := 1
-	for xp := acc.XP; xp >= int64(level*100); xp -= int64(level * 100) {
-		level++
-	}
-	if level != acc.Level {
+	// El nivel sale de la MISMA curva que enseña el perfil (internal/xp).
+	// Antes había aquí una fórmula propia (nivel*100) distinta de la del
+	// perfil: el bot decía un nivel y guardaba otro.
+	if level := xp.NivelPara(acc.XP); level != acc.Level {
 		acc.Level = level
 	}
 	_, err = s.db.ExecContext(ctx, `UPDATE users SET xp = ?, level = ? WHERE jid = ?`, acc.XP, acc.Level, jid)
