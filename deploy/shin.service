@@ -1,41 +1,51 @@
 # Shin-MD-Go — Copyright (C) 2026 riokuroxi-svg · AGPL-3.0-only
 #
-# shin.service — unidad systemd (bloque B7)
+# shin.service — unidad systemd para dejar el bot corriendo en un VPS.
 #
 # Instalación:
-#   sudo cp dist/shin /opt/shin/shin && sudo cp .env /opt/shin/.env
+#   sudo cp dist/shin /opt/shin/shin
+#   sudo cp .env /opt/shin/.env
 #   sudo cp deploy/shin.service /etc/systemd/system/shin.service
-#   sudo systemctl daemon-reload && sudo systemctl enable --now shin
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now shin
+#   journalctl -u shin -f        ← el log
 #
-# Ver:   journalctl -u shin -f
-# El binario se cierra limpio con SIGTERM (shotdown notify), así que los
-# reinicios no dejan la sesión a medias.
+# Restart=on-failure (no "always": si el bot muere por sesión caducada,
+# reiniciar en bucle solo empeora el ban; con on-failure vuelve y, si vuelve
+# a caer, Systemd lo frena con StartLimitBurst).
+#
+# MemoryMax y no MemoryLimit porque es la forma moderna; y el arranque limpio
+# (Ctrl+C → cierre de la sesión, flush de SQLite, matar goroutines).
 [Unit]
-Description=Shin-MD (Go) — bot de WhatsApp
+Description=Shin-MD Go — bot de WhatsApp (whatsmeow, cola anti-ban)
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 Type=simple
+User=shin
+Group=shin
 WorkingDirectory=/opt/shin
-ExecStart=/opt/shin/shin
+# La sesión y los datos viven en data/ junto al binario.
+ExecStart=/opt/shin/shin --dir /opt/shin/data
+EnvironmentFile=-/opt/shin/.env
+Environment=PORT=3000 LOOPBACK=1
+
+# Apagado limpio: Ctrl+C en Go cancela el contexto; 10 s de gracia.
+TimeoutStopSec=10
+KillSignal=SIGTERM
 Restart=on-failure
-RestartSec=5s
-# Sin límite de reinicios bruscos: si la base está rota el bot sale con
-# código 1 y systemd espera RestartSec; no hay bucle infinito agresivo.
-StandardOutput=journal
-StandardError=journal
+RestartSec=5
 
-# Duración razonable para cerrar la cola de envío antes del SIGKILL.
-TimeoutStopSec=10s
-
-# Endurecimiento básico: el bot no necesita nada de esto.
-NoNewPrivileges=true
+# Recursos: el bot con cola y panel no pasa de ~150 MB; 512 es holgura.
+MemoryMax=512M
+# Menos ruido: no heredar cosas del sistema.
 ProtectSystem=full
 ProtectHome=true
 PrivateTmp=true
-# ReadWritePaths para los datos y el log (STATE_DIR). Si cambias el
-# WorkingDirectory, cambia esto igual.
+NoNewPrivileges=true
 ReadWritePaths=/opt/shin/data
 
 [Install]

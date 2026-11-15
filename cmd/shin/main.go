@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.15.0"
+var version = "0.16.0"
 
 func main() {
 	var (
@@ -172,9 +172,9 @@ func main() {
 			Conectado: client.WA.IsConnected(), Version: version,
 			Arranque:  client.StartedAt,
 			SentToday: s.SentToday, Budget: s.Budget, ModoLento: s.Slowed,
-			Anchor:  s.Anchor.Format("02/01/2006"),
+			Anchor:  s.Anchor,
 			Workers: d.Workers, EnCola: d.EnCola, ColaMax: d.Cola,
-			Recibidos: d.Recibidos, Procesados: d.Procesados, Descartados: d.Descartados,
+			Recibidos: int64(d.Recibidos), Procesados: int64(d.Procesados), Descartados: int64(d.Descartados),
 		}
 	}, log.Info)
 	panel.Arrancar(ctx)

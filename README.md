@@ -58,7 +58,7 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B7.0 · Operación y estado** | `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart` `.update` `.subir` `.cache` `.shell` `.setmenu` | ✅ **hecho** ([docs/OPERACION.md](docs/OPERACION.md)) |
 | **B5.2 · Utilidades (2/2)** | `.traducir` (2 proveedores + detector propio) `.tts` `.acortar` `.tourl` `.crypto` `.letra` `.gitclone` `.githubstalk` `.ai` (con `GEMINI_KEY`) y `.hd` + `.carbon` **locales** (sin subir nada a webs ajenas); `.benchdl` queda para B6 | ✅ **hecho** ([docs/UTILIDADES2.md](docs/UTILIDADES2.md)) |
 | **B6.0 · Música (escucha y descarga)** | `.play` (catálogos libres: Audius/Deezer/iTunes en paralelo, lista numerada, semáforo por chat) · `.escucha` (preview oficial) — *decisión: solo donde se permite descargar, no se piratea YouTube* | ✅ **hecho** ([docs/MUSICA.md](docs/MUSICA.md)) |
-| B6.1 · Descargas sociales | yt/tiktok/ig/fb/x (vídeo corto) — *pendiente* | ⬜ |
+| **B6.1 · Descargas sociales** | `.yt` `.ytmp3` `.tiktok` `.ig` `.fb` `.x` vía **yt-dlp cuando está instalado** (decisión auditada: YouTube 2026 exige PoToken; no se finge, se explica) — tope 100 MB, plazo 5 min | ✅ **hecho** |
 | **B7 · Panel web** | `/health` `/queue` `/memoria` `/metrics` con failsafe loopback + Basic auth con candado, **rotación de logs** (4 MB × 3), unidad `systemd` | ✅ **hecho** ([docs/PANEL.md](docs/PANEL.md)) |
 | B8 · Paridad de pruebas | portar las 161 pruebas del JS y sumar las nuevas | ⬜ |
 
@@ -128,6 +128,21 @@ Todos con **fallback a texto plano** si WhatsApp no los pinta.
 Catálogo, comparativa con Baileys y estado de verificación: **[docs/BOTONES.md](docs/BOTONES.md)**.
 
 ## Instalación
+
+**Un comando** (Termux, Linux, macOS, WSL — detecta el entorno, instala Go con
+huella verificada, compila y deja el servicio listo):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/riokuroxi-svg/Shin-MD-Go/main/shin-go.sh | sh
+```
+
+El mismo comando sirve para **actualizar** (si el código ya está, lo trae
+fresco). Variables: `SHIN_GO_DIR=RUTA`, `SHIN_GO_REF=vX.Y.Z`,
+`SHIN_GO_CON_YTDLP=0` (saltar yt-dlp), `SHIN_GO_SIN_SERVICIO=1`,
+`SHIN_GO_DRY_RUN=1` (ensayo sin tocar nada). También instala **yt-dlp**
+standalone en `~/.local/bin` para `.yt`/`.tiktok`/`.ig`.
+
+Modo manual (si prefieres mirar antes de instalar):
 
 ```bash
 git clone https://github.com/riokuroxi-svg/Shin-MD-Go
@@ -308,6 +323,13 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.16.0** — bloque B6.1 + operación: **`shin-go.sh`** (instalación en un
+  comando estilo shin.sh, con toolchain Go verificado por SHA-256) y los
+  sociales `.yt` `.ytmp3` `.tiktok` `.ig` `.fb` `.x` como capa honesta sobre
+  yt-dlp: si falta, enseña a ponerlo; si YouTube pide PoToken, lo explica
+  en vez de fingir. Tope 100 MB / plazo 5 min. Auditoría de nov-2026:
+  YouTube bloquea datacenter y exige PoToken — un scraper Go propio sería
+  prometer humo.
 - **0.15.0** — bloque B6.0: **música con licencia**. `.play` busca en
   Audius (audio completo libre), Deezer e iTunes (previews) a la vez y
   ordena: descargable delante; `.escucha` da el fragmento oficial de 30 s.

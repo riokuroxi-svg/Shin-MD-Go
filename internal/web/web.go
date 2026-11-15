@@ -1,21 +1,23 @@
 // Shin-MD-Go — Copyright (C) 2026 riokuroxi-svg · AGPL-3.0-only
 //
-// web.go — Panel HTTP local (bloque B7). Puerto de src/web/server.js:
+// web.go — panel web del bot: puerto de src/web/server.js.
+// / → ficha | /health → conexión + cola + repartidor | /queue → antiban |
+// /memoria → RSS, heap y goroutines | cualquier otra ruta es 404.
 //
-//	/         ficha del bot (nombre, versión, huella anti-ban, estado)
-//	/health   salud: conexión, uptime, cola, repartidor, RAM
-//	/queue    la cola anti-ban y el calentamiento en detalle
-//	/memoria  memoria del proceso y del runtime
-//	/metrics  proceso + SO + motor, para graphenar frío
+// Seguridad conservada del JS (y la reseña que lo auditó):
+//   - escucha en 127.0.0.1 por defecto; solo con LOOPBACK=0 **y**
+//     PANEL_PASSWORD puesta pasa a 0.0.0.0 — si falta la contraseña vuelve
+//     solo a loopback (el riesgo, la cola y la memoria no se enseñan a la
+//     red abierta).
+//   - panel expuesto ⇒ Basic auth con usuario fijo "admin" y la clave
+//     comparada por SHA-256 en tiempo constante (así no filtra la longitud
+//     por temporización: siempre se comparan 32 bytes).
+//   - candado anti fuerza bruta: 10 fallos seguidos desde una IP bloquean el
+//     panel para ella durante 5 minutos (429 + Retry-After). Cada acierto
+//     borra la cuenta; bloqueada, ni con clave buena entra.
 //
-// REGLAS DE LA CASA (las mismas que el JS):
-//
-//  1. Solo escucha en 127.0.0.1 salvo LOOPBACK=0.
-//  2. FAILSAFE: LOOPBACK=0 sin PANEL_PASSWORD → vuelve a 127.0.0.1 aunque lo
-//     hayas pedido. Riesgo/cola/memoria no se enseñan a la red entera.
-//  3. Panel expuesto ⇒ Basic auth con usuario fijo «admin» y contraseña
-//     comparada por SHA-256 en tiempo constante (la longitud no se filtra).
-//  4. Candado anti fuerza bruta: 10 fallos por IP → 429 durante 5 minutos.
+// Net/http en vez de express: un panel con 5 rutas no necesita framework —
+// el mux de la librería estándar basta y no suma dependencias.
 package web
 
 import (
@@ -23,6 +25,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -33,325 +36,352 @@ import (
 	"time"
 )
 
-// Huella del motor anti-ban: otra cosa que responda distinto no es este bot.
-const Huella = "shin-gauss-0.25-1200ms"
-
-// Estado es la foto que leen los endpoints. La rellena main con un cierre
-// sobre el cliente, la cola y el repartidor: este paquete no importa wa/bot
-// para no liar un ciclo de dependencias.
-type Estado struct {
-	Conectado   bool   // hay sesión viva con WhatsApp
-	Version     string // versión del binario
-	Arranque    time.Time
-	SentToday   int    // envíos no prioritarios de hoy
-	Budget      int    // cupo de hoy según el calentamiento
-	ModoLento   bool   // cupo agotado: el bot duplica esperas
-	Anchor      string // día del primer arranque (calentamiento)
-	Workers     int    // mensajes atendidos a la vez
-	EnCola      int    // mensajes esperando turno en el repartidor
-	ColaMax     int    // techo de esa espera
-	Recibidos   uint64 // mensajes entrados desde el arranque
-	Procesados  uint64
-	Descartados uint64 // los que no cupieron en la cola
-}
-
-// Config del panel.
-type Config struct {
-	Puerto   int    // PORT (defecto 3000)
-	Publico  bool   // LOOPBACK=0 en el .env
-	Password string // PANEL_PASSWORD
-}
-
+// Los tamaños del candado anti fuerza bruta (los mismos del JS).
 const (
-	panelUser  = "admin"
 	maxFallos  = 10
-	ventana429 = 5 * time.Minute
+	bloqueoMin = 5 * time.Minute
 )
 
-// Server es el panel: un net/http pelado, sin frameworks.
+// Config es lo que el panel necesita de fuera.
+type Config struct {
+	Puerto   int    // PORT (defecto 3000)
+	Publico  bool   // LOOPBACK=0
+	Password string // PANEL_PASSWORD (obligatoria si Publico)
+}
+
+// Estado es la foto que el panel vende. La rellena el main con un callback
+// para no importar internal/bot ni wa desde aquí (web no les tira).
+type Estado struct {
+	Conectado   bool
+	Version     string
+	Arranque    time.Time
+	SentToday   int
+	Budget      int
+	ModoLento   bool
+	Anchor      time.Time
+	Workers     int
+	EnCola      int
+	ColaMax     int
+	Recibidos   int64
+	Procesados  int64
+	Descartados int64
+}
+
+// Server es el panel. Log es opcional (nil → nada).
 type Server struct {
 	cfg    Config
 	estado func() Estado
-	avisar func(string) // mensajes de arranque (xlog.Warn/Info)
-
-	srv *http.Server
-	// Dir es la dirección final tras el failsafe (la que hay que enseñar
-	// al usuario). La ponen Arrancar/Listen y la miran las pruebas.
-	Dir string
+	log    func(string) // p.ej. log.Warn
 
 	mu     sync.Mutex
-	fallos map[string]*falloIP
-	// VentanaFallos es variable para que las pruebas no esperen 5 minutos.
-	VentanaFallos time.Duration
+	fallos map[string]int
+	hasta  map[string]time.Time
+
+	srv *http.Server
+	Dir string // la dirección a la que ESCUCHA (127.0.0.1 o 0.0.0.0)
 }
 
-type falloIP struct {
-	veces int
-	desde time.Time
-}
-
-// Nuevo crea el panel con su handlers. estado se llama en cada petición.
-func Nuevo(cfg Config, estado func() Estado, avisar func(string)) *Server {
-	s := &Server{
-		cfg:           cfg,
-		estado:        estado,
-		avisar:        avisar,
-		fallos:        map[string]*falloIP{},
-		VentanaFallos: ventana429,
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.envolver(s.inicio))
-	mux.HandleFunc("/health", s.envolver(s.health))
-	mux.HandleFunc("/queue", s.envolver(s.queue))
-	mux.HandleFunc("/memoria", s.envolver(s.memoria))
-	mux.HandleFunc("/metrics", s.envolver(s.metrics))
-
-	host := "127.0.0.1"
-	if cfg.Publico {
-		if cfg.Password == "" {
-			// FAILSAFE (igual que el JS): exponer sin contraseña no se permite.
-			s.avisar("Panel: LOOPBACK=0 sin PANEL_PASSWORD — por seguridad solo escuchará en 127.0.0.1")
-		} else {
-			host = "0.0.0.0"
-		}
-	}
+// Nuevo prepara el panel; si pide público sin contraseña, cae a loopback con
+// un aviso (el failsafe del JS, respice doble: no se consuela configurando).
+func Nuevo(cfg Config, estado func() Estado, log func(string)) *Server {
 	if cfg.Puerto <= 0 || cfg.Puerto > 65535 {
 		cfg.Puerto = 3000
 	}
-	s.cfg = cfg
-	s.Dir = net.JoinHostPort(host, strconv.Itoa(cfg.Puerto))
-	s.srv = &http.Server{
-		Addr:              s.Dir,
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		MaxHeaderBytes:    8 << 10,
+	if estado == nil {
+		estado = func() Estado { return Estado{} }
 	}
+	if log == nil {
+		log = func(string) {}
+	}
+	s := &Server{cfg: cfg, estado: estado, log: log, fallos: map[string]int{}, hasta: map[string]time.Time{}}
+
+	ip := "127.0.0.1"
+	if cfg.Publico && cfg.Password == "" {
+		log(`[web] LOOPBACK=0 pero falta PANEL_PASSWORD; sigue en loopback. El panel expone riesgo, cola y memoria: sin contraseña no se abre.`)
+		cfg.Publico = false
+	}
+	if cfg.Publico {
+		ip = "0.0.0.0"
+	}
+	s.Dir = net.JoinHostPort(ip, strconv.Itoa(cfg.Puerto))
 	return s
 }
 
-// Arrancar levanta el panel y lo cierra solo cuando muere el contexto.
-// Un puerto ocupado se avisa pero NO tumba el bot: el panel es un extra.
-func (s *Server) Arrancar(ctx context.Context) {
-	ln, err := net.Listen("tcp", s.Dir)
+// Arrancar lanza el panel y se queda sirviendo hasta que ctx muere. Devuelve
+// error solo si el puerto falla al abrirse (para que el main decida si
+// avisar o morir); los cierres limpios no son error.
+func (s *Server) Arrancar(ctx context.Context) error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", s.inicio) // / → ficha; lo demás 404
+	mux.HandleFunc("/health", s.health)
+	mux.HandleFunc("/queue", s.queue)
+	mux.HandleFunc("/memoria", s.memoria)
+	s.srv = &http.Server{Addr: s.Dir, Handler: s.conter(s.middleware(mux))}
+
+	oyente, err := net.Listen("tcp", s.Dir)
 	if err != nil {
-		s.avisar("Panel web no pudo escuchar en " + s.Dir + ": " + err.Error())
-		return
+		return err
 	}
-	s.avisar("Panel web en http://" + s.Dir + "  (/, /health, /queue, /memoria, /metrics)")
 	go func() {
 		<-ctx.Done()
-		cierre, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer cancel()
-		_ = s.srv.Shutdown(cierre)
+		c2, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = s.srv.Shutdown(c2)
+		cancel()
 	}()
-	go func() { _ = s.srv.Serve(ln) }()
+	go func() { _ = s.srv.Serve(oyente) }()
+	return nil
 }
 
-// ── Auth ────────────────────────────────────────────────────────────────────
-
-// envolver aplica la contraseña cuando el panel está expuesto (en loopback no
-// hace falta: solo la ve quien ya está DENTRO del servidor).
-func (s *Server) envolver(h http.HandlerFunc) http.HandlerFunc {
-	expuesto := strings.HasPrefix(s.Dir, "0.0.0.0")
-	if !expuesto {
-		return h
-	}
-	return func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		if i := strings.LastIndexByte(ip, ':'); i >= 0 {
-			ip = ip[:i]
-		}
-		if s.bloqueada(ip) {
-			w.Header().Set("Retry-After", strconv.Itoa(int(s.VentanaFallos.Seconds())))
-			s.responder(w, http.StatusTooManyRequests, map[string]any{
-				"ok": false, "error": "Demasiados intentos fallidos. Espera 5 minutos.",
-			})
-			return
-		}
-		user, pass, ok := r.BasicAuth()
-		if !ok || !segurasIguales(user, panelUser) || !segurasIguales(pass, s.cfg.Password) {
-			s.anotarFallo(ip)
-			w.Header().Set("WWW-Authenticate", `Basic realm="Shin-MD"`)
-			s.responder(w, http.StatusUnauthorized, map[string]any{
-				"ok": false, "error": "Requiere PANEL_PASSWORD (usuario: admin)",
-			})
-			return
-		}
-		s.olvidarFallos(ip)
-		h(w, r)
-	}
+// conter quita el ServerHeader de Go que delata la versión (el JS no
+// mandaba; aquí tampoco).
+func (s *Server) conter(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		h.ServeHTTP(w, r)
+	})
 }
 
-// segurasIguales compara sin revelar la longitud: se comparan los SHA-256,
-// que siempre miden 32 bytes (truco del JS, mismo motivo).
-func segurasIguales(a, b string) bool {
-	ha := sha256.Sum256([]byte(a))
-	hb := sha256.Sum256([]byte(b))
-	return subtle.ConstantTimeCompare(ha[:], hb[:]) == 1
+// middleware: Basic auth solo si el panel está expuesto y hay contraseña.
+// Si está en loopback, no hay contraseña que pedir (127.0.0.1 ya es local).
+func (s *Server) middleware(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.cfg.Publico && s.cfg.Password != "" {
+			if !s.autorizado(w, r) {
+				return
+			}
+		}
+		h.ServeHTTP(w, r)
+	})
 }
 
-func (s *Server) bloqueada(ip string) bool {
+// autorizado aplica candado y Basic auth con comparación en tiempo constante.
+// Devuelve true si la petición puede pasar.
+func (s *Server) autorizado(w http.ResponseWriter, r *http.Request) bool {
+	ip := ipDe(r)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	f, ok := s.fallos[ip]
-	if !ok {
+	if hasta, ok := s.hasta[ip]; ok && time.Now().Before(hasta) {
+		restante := time.Until(hasta)
+		s.mu.Unlock()
+		w.Header().Set("Retry-After", strconv.Itoa(int(restante.Seconds())+1))
+		http.Error(w, "429 Too Many Requests — panel bloqueado por intentos. Vuelve en "+restante.Round(time.Second).String(), http.StatusTooManyRequests)
 		return false
 	}
-	if time.Since(f.desde) > s.VentanaFallos {
+	s.mu.Unlock()
+
+	u, p, ok := r.BasicAuth()
+	if !ok || !s.claveCoincide(u, p) {
+		s.apuntaFallo(ip)
+		w.Header().Set("WWW-Authenticate", `Basic realm="shin-md-panel", charset="UTF-8"`)
+		http.Error(w, "401 — se necesita acceso (usuario: admin)", http.StatusUnauthorized)
+		return false
+	}
+	// Acierto: olvido los fallos de esa IP.
+	s.mu.Lock()
+	delete(s.fallos, ip)
+	s.mu.Unlock()
+	return true
+}
+
+// apuntaFallo: al llegar a 10, 5 minutos de 429 para esa IP.
+func (s *Server) apuntaFallo(ip string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := s.fallos[ip] + 1
+	if n >= maxFallos {
+		s.hasta[ip] = time.Now().Add(bloqueoMin)
 		delete(s.fallos, ip)
-		return false
-	}
-	return f.veces >= maxFallos
-}
-
-func (s *Server) anotarFallo(ip string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	f, ok := s.fallos[ip]
-	if !ok || time.Since(f.desde) > s.VentanaFallos {
-		s.fallos[ip] = &falloIP{veces: 1, desde: time.Now()}
+		s.log(fmt.Sprintf("[web] fuerza bruta desde %s: panel bloqueado %s", ip, bloqueoMin))
 		return
 	}
-	f.veces++
+	s.fallos[ip] = n
 }
 
-func (s *Server) olvidarFallos(ip string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	delete(s.fallos, ip)
+// claveCoincide: el usuario es siempre "admin" y la clave se compara tras
+// SHA-256 (tiempo constante: el ataque de temporización no filtra la clave
+// ni su longitud; siempre se comparan 32 bytes).
+func (s *Server) claveCoincide(usuario, clave string) bool {
+	if usuario != "admin" {
+		return false
+	}
+	h1 := sha256.Sum256([]byte(clave))
+	h2 := sha256.Sum256([]byte(s.cfg.Password))
+	return subtle.ConstantTimeCompare(h1[:], h2[:]) == 1
 }
 
 // ── Endpoints ───────────────────────────────────────────────────────────────
 
-func (s *Server) responder(w http.ResponseWriter, codigo int, datos any) {
+// escribir: siempre JSON, nunca HTML (un panel de consola no necesita vistas).
+func escribir(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(codigo)
-	_ = json.NewEncoder(w).Encode(datos)
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(v)
 }
 
+// inicio: la ficha del bot. Cualquier otra ruta desde "/" es 404, como el
+// express del JS ("/inexistente" no devuelve el panel adrede).
 func (s *Server) inicio(w http.ResponseWriter, r *http.Request) {
-	// El patrón "/" del mux caza TODO lo no registrado: una ruta equivocada
-	// debe ser 404, no la ficha del bot (el JS con express hacía lo mismo).
 	if r.URL.Path != "/" {
-		s.responder(w, http.StatusNotFound, map[string]bool{"ok": false})
+		http.NotFound(w, r)
 		return
 	}
 	e := s.estado()
-	s.responder(w, http.StatusOK, map[string]any{
+	escribir(w, map[string]any{
 		"ok":          true,
-		"name":        "Shin-MD",
+		"name":        "Shin-MD Go",
 		"version":     e.Version,
-		"fingerprint": Huella,
-		"engine":      estadoTexto(e.Conectado),
-		"ts":          time.Now().UnixMilli(),
+		"fingerprint": "shin-gauss-0.25-1200ms",
+		"engine":      estadoConn(e.Conectado),
+		"ts":          time.Now().Format("2006-01-02 15:04:05"),
 	})
 }
 
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
+// health: conexión, uptime, cola y repartidor.
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 	e := s.estado()
-	s.responder(w, http.StatusOK, map[string]any{
+	escribir(w, map[string]any{
 		"ok":        true,
-		"state":     estadoTexto(e.Conectado),
-		"uptimeSec": int64(time.Since(e.Arranque).Seconds()),
+		"state":     estadoConn(e.Conectado),
+		"uptimeSec": int(time.Since(e.Arranque).Seconds()),
+		"version":   e.Version,
 		"queue": map[string]any{
-			"sentToday":   e.SentToday,
-			"budget":      e.Budget,
-			"slowMode":    e.ModoLento,
-			"warmupSince": e.Anchor,
+			"sentToday":  e.SentToday,
+			"budget":     e.Budget,
+			"slowMode":   e.ModoLento,
+			"anchorAge":  edad(e.Anchor),
+			"pendientes": e.EnCola,
 		},
 		"dispatcher": map[string]any{
-			"workers": e.Workers, "pending": e.EnCola, "maxPending": e.ColaMax,
-			"received": e.Recibidos, "processed": e.Procesados, "dropped": e.Descartados,
+			"workers":   e.Workers,
+			"colaCap":   e.ColaMax,
+			"pending":   e.EnCola,
+			"recibidos": e.Recibidos,
 		},
 		"memoryMB": rssMB(),
 	})
 }
 
-func (s *Server) queue(w http.ResponseWriter, _ *http.Request) {
+// queue: la cola antiban en detalle.
+func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 	e := s.estado()
-	s.responder(w, http.StatusOK, map[string]any{
-		"ok": true,
+	escribir(w, map[string]any{
+		"ok":          true,
+		"queueLen":    e.EnCola,
+		"queueMax":    e.ColaMax,
+		"workers":     e.Workers,
+		"recibidos":   e.Recibidos,
+		"procesados":  e.Procesados,
+		"descartados": e.Descartados,
 		"antiban": map[string]any{
-			"sentToday": e.SentToday, "budget": e.Budget,
-			"slowMode": e.ModoLento, "warmupSince": e.Anchor,
-			"regla": "1200 ms base · σ0.25 · +25 ms/carácter · 20→500 en 7 días",
-		},
-		"dispatcher": map[string]any{
-			"workers": e.Workers, "pending": e.EnCola, "maxPending": e.ColaMax,
-			"received": e.Recibidos, "processed": e.Procesados, "dropped": e.Descartados,
+			"sentToday": e.SentToday,
+			"budget":    e.Budget,
+			"slowMode":  e.ModoLento,
+			"anchorAge": edad(e.Anchor),
+			"gauss":     "μ=0.25 · techo 1200 ms",
 		},
 	})
 }
 
-func (s *Server) memoria(w http.ResponseWriter, _ *http.Request) {
+// memoria: RSS leído de /proc (el real, no el runtime) + heap + GC.
+func (s *Server) memoria(w http.ResponseWriter, r *http.Request) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	s.responder(w, http.StatusOK, map[string]any{
+	escribir(w, map[string]any{
 		"ok":          true,
 		"rssMB":       rssMB(),
-		"heapAllocMB": redondearMB(m.HeapAlloc),
-		"heapSysMB":   redondearMB(m.HeapSys),
-		"stackSysMB":  redondearMB(m.StackSys),
+		"heapAllocMB": m.Alloc >> 20,
+		"heapSysMB":   m.Sys >> 20,
 		"numGC":       m.NumGC,
 		"goroutines":  runtime.NumGoroutine(),
-		"gomaxprocs":  runtime.GOMAXPROCS(0),
+		"goVersion":   runtime.Version(),
+		"numCPU":      runtime.NumCPU(),
 	})
 }
 
-func (s *Server) metrics(w http.ResponseWriter, _ *http.Request) {
+// metrics: los mismos números en forma plana para un cURL/graficador externo.
+func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	e := s.estado()
-	s.responder(w, http.StatusOK, map[string]any{
-		"ok":           true,
-		"shin_version": e.Version,
-		"fingerprint":  Huella,
-		"process": map[string]any{
-			"pid":       os.Getpid(),
-			"uptimeSec": int64(time.Since(e.Arranque).Seconds()),
-			"go":        runtime.Version(),
-			"platform":  runtime.GOOS + "/" + runtime.GOARCH,
-		},
-		"os": map[string]any{
-			"cpus": runtime.NumCPU(),
-		},
-		"engine": map[string]any{"state": estadoTexto(e.Conectado)},
+	escribir(w, map[string]any{
+		"ok":          true,
+		"uptimeSec":   int(time.Since(e.Arranque).Seconds()),
+		"queueSent":   e.SentToday,
+		"queuePend":   e.EnCola,
+		"descartados": e.Descartados,
+		"rssMB":       rssMB(),
+		"goroutines":  runtime.NumGoroutine(),
+		"goVersion":   runtime.Version(),
+		"state":       estadoConn(e.Conectado),
 	})
 }
 
-// ── Atajos ──────────────────────────────────────────────────────────────────
+// ── pelo ───────────────────────────────────────────────────────────────────
 
-func estadoTexto(conectado bool) string {
-	if conectado {
+// ipDe saca la IP sin puerto (XF ware no: detrás de proxy no vale — el panel
+// solo debe exponerse directo. Si no se puede, se usa la cruda).
+func ipDe(r *http.Request) string {
+	remoto := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(remoto); err == nil {
+		return host
+	}
+	return remoto
+}
+
+func estadoConn(ok bool) string {
+	if ok {
 		return "conectado"
 	}
-	return "desconectado"
+	return "reconectando"
 }
 
-func redondearMB(bytes uint64) float64 {
-	v := float64(bytes) / 1048576
-	return float64(int(v*10)) / 10
+// edad: legible para el ancla antiban ("hace 12 min" defrauda menos que un
+// timestamp crudo cuando la revisas desde el teléfono).
+func edad(t time.Time) string {
+	if t.IsZero() {
+		return "0 s"
+	}
+	d := time.Since(t).Round(time.Second)
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("hace %ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("hace %dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	default:
+		return fmt.Sprintf("hace %dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
 }
 
-// rssMB lee la RSS real del proceso (en Linux, de /proc; si no se puede, 0).
-func rssMB() float64 {
+// rssMB: la memoria REAL del proceso, leída del kernel — lo mismo que /health
+// del JS enseñaba. En Linux es /proc/self/stat (el campo 24, en páginas y
+// hay que saltarlo el nombre entre paréntesis); fuera de Linux vuelve al
+// runtime, que pinta menos pero no miente con ceros.
+func rssMB() uint64 {
+	if raw, err := osReadProc(); err == nil {
+		return raw
+	}
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
-	if runtime.GOOS != "linux" {
-		return redondearMB(m.Sys)
-	}
-	datos, err := os.ReadFile("/proc/self/stat")
+	return m.Sys >> 20
+}
+
+// osReadProc abre /proc/self/stat aparte (para poder probarlo y no confundir
+// el formato: el campo 2 puede tener espacios dentro de paréntesis).
+var osReadProc = func() (uint64, error) {
+	b, err := os.ReadFile("/proc/self/stat")
 	if err != nil {
-		return redondearMB(m.Sys)
+		return 0, err
 	}
-	// El campo 24 es la RSS en páginas. El nombre del proceso va entre
-	// paréntesis y PUEDE llevar espacios: se busca tras el último ')'.
-	campos := strings.Fields(string(datos[strings.LastIndexByte(string(datos), ')')+1:]))
-	if len(campos) < 22 {
-		return redondearMB(m.Sys)
+	linea := string(b)
+	fin := strings.LastIndex(linea, ")")
+	if fin < 0 {
+		return 0, fmt.Errorf("formato raro")
 	}
-	paginas, err := strconv.ParseInt(campos[21], 10, 64)
+	campos := strings.Fields(linea[fin+2:]) // tras ") " quedan los campos 3..
+	if len(campos) < 22 {                   // (3=state … 24=rss, aquí índice 21)
+		return 0, fmt.Errorf("pocos campos")
+	}
+	rssPaginas, err := strconv.ParseUint(campos[21], 10, 64)
 	if err != nil {
-		return redondearMB(m.Sys)
+		return 0, err
 	}
-	return redondearMB(uint64(paginas) * uint64(os.Getpagesize()))
+	return (rssPaginas * uint64(os.Getpagesize())) >> 20, nil
 }

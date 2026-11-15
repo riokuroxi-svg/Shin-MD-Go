@@ -114,7 +114,6 @@ Traducción honesta:
 
 ---
 
-<!-- roxi estuvo aquí, dejando notas a las 4 de la mañana -->
 
 ## 4. Botones: cómo queda, probado
 
@@ -264,8 +263,12 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   **B6.0 · música (✓ 0.15.0)**: `.play` busca en Audius + Deezer + iTunes y
   baja el audio completo **solo donde se permite** (nada de yt-dlp); el
   motor `internal/musica` aplica 24 MB, solo-audio y 15 s de timeout.
-  **B6.1 · vídeos sociales (pendiente)**: `yt`, `tiktok`, `ig`, `fb`, `x` —
-  aquí decides A o B (ver §5).
+  **B6.1 · vídeos sociales (✓ 0.16.0)**: `.yt`, `.ytmp3`, `.tiktok`, `.ig`,
+  `fb`, `.x` — wrapper fino sobre **yt-dlp** (no Go puro ni microservicio):
+  100 MB de tope, 5 min de plazo, errores traducidos («sign in to confirm» →
+  «la plataforma pide comprobar que no somos un bot»). Si yt-dlp falta, el
+  comando enseña a ponerlo. Auditoría nov-2026: YouTube exige PoToken y
+  bloquea datacenter, así que portar el scraper sería prometer humo.
 - **B7 · Panel web + operación**
   `/health`, `/queue`, `/memoria` con Basic auth, rotación de logs, unidad
   `systemd` (`Restart=always`, `MemoryMax=512M`) o script de Termux.

@@ -73,6 +73,32 @@ func (c *Client) SendAudioPista(ctx context.Context, chat types.JID, mp3 []byte,
 	})
 }
 
+// SendVideoPlano manda un MP4 normal con caption (el caso de .yt/.tiktok).
+// El caption también cuenta para el anti-ban: es texto andando.
+func (c *Client) SendVideoPlano(ctx context.Context, chat types.JID, mp4 []byte, caption string, priority bool) error {
+	if len(mp4) == 0 {
+		return errVacio
+	}
+	up, err := c.WA.Upload(ctx, mp4, whatsmeow.MediaVideo)
+	if err != nil {
+		return err
+	}
+	msg := &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+		Caption:       proto.String(caption),
+		URL:           proto.String(up.URL),
+		DirectPath:    proto.String(up.DirectPath),
+		MediaKey:      up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256,
+		FileSHA256:    up.FileSHA256,
+		FileLength:    proto.Uint64(up.FileLength),
+		Mimetype:      proto.String("video/mp4"),
+	}}
+	return c.Queue.Do(ctx, len(caption), priority, func() error {
+		_, err := c.WA.SendMessage(ctx, chat, msg)
+		return err
+	})
+}
+
 // SendVideoRedondo manda un MP4 como vídeo instantáneo (el círculo). En el
 // protocolo no es un flag del vídeo: es el campo `ptvMessage` del mensaje, que
 // lleva dentro un VideoMessage normal — igual que hace Baileys
