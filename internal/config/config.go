@@ -54,6 +54,11 @@ type Config struct {
 	OwnerName   string        // OWNER_NAME: cómo se llama el dueño en .owner
 	OwnerNumber string        // OWNER_NUMBER: número para el botón de llamada
 
+	// IA (`.ai`): sin GEMINI_KEY el comando responde cómo conseguir una, como
+	// hacía el JS — no se inventa una respuesta ni finge funcionar.
+	GeminiKey   string // GEMINI_KEY: key de aistudio.google.com/apikey
+	GeminiModel string // GEMINI_MODEL (por defecto gemini-1.5-flash)
+
 	// Anti-ban (mismos parámetros que el motor JS)
 	BaseDelay   time.Duration // 1200ms por defecto
 	JitterSigma float64       // 0.25
@@ -160,6 +165,8 @@ func LoadFrom(envPath string) Config {
 		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",
 		OwnerName:   vars.str("OWNER_NAME", "el dueño"),
 		OwnerNumber: vars.str("OWNER_NUMBER", ""),
+		GeminiKey:   vars.str("GEMINI_KEY", ""),
+		GeminiModel: vars.str("GEMINI_MODEL", "gemini-1.5-flash"),
 
 		BaseDelay:   time.Duration(vars.integer("ANTIBAN_BASE_MS", 1200)) * time.Millisecond,
 		JitterSigma: vars.float("ANTIBAN_SIGMA", 0.25),

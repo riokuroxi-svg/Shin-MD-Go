@@ -156,9 +156,11 @@ func init() {
 	})
 
 	// .rich → respuesta enriquecida estilo IA (experimental, RICH_AI=1)
+	// Nota: el alias «ai» lo tenía este comando como placeholder; en el bloque
+	// B5.2 pasa a la IA de verdad (.ai → Gemini), como en el bot de JS.
 	bot.Register(bot.Command{
 		Name:     "rich",
-		Aliases:  []string{"ai", "markdown"},
+		Aliases:  []string{"markdown", "richai"},
 		Category: bot.CatUtils,
 		Desc:     "Prueba de respuesta enriquecida (markdown/tabla) · experimental",
 		Run: func(c *bot.Context) error {

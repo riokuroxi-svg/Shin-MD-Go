@@ -56,7 +56,7 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B5 · Stickers y media** | `.sticker` (13 formas, 14 efectos), `.toimg`, `.stickerinfo`, EXIF propio en Go, vídeo local con `ffmpeg` | ✅ **hecho** ([docs/STICKERS.md](docs/STICKERS.md)) |
 | **B5.1 · Utilidades (1/2)** | `.qr` `.morse` `.demorse` `.recordar` `.olvidar` `.say` `.encuesta` `.pfp` `.wastalk` `.readviewonce` `.get`, encuestas y quiz nativos, recordatorios que sobreviven al reinicio | ✅ **hecho** ([docs/UTILIDADES.md](docs/UTILIDADES.md)) |
 | **B7.0 · Operación y estado** | `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart` `.update` `.subir` `.cache` `.shell` `.setmenu` | ✅ **hecho** ([docs/OPERACION.md](docs/OPERACION.md)) |
-| B5.2 · Utilidades (2/2) | `.traducir` `.tts` `.acortar` `.tourl` `.hd` `.carbon` `.crypto` `.letra` `.toimg` `.gitclone` `.githubstalk` `.ptv` `.benchdl`, `.ai` | ⬜ (depende de APIs de terceros) |
+| **B5.2 · Utilidades (2/2)** | `.traducir` (2 proveedores + detector propio) `.tts` `.acortar` `.tourl` `.crypto` `.letra` `.gitclone` `.githubstalk` `.ai` (con `GEMINI_KEY`) y `.hd` + `.carbon` **locales** (sin subir nada a webs ajenas); `.benchdl` queda para B6 | ✅ **hecho** ([docs/UTILIDADES2.md](docs/UTILIDADES2.md)) |
 | B6 · Descargas | play/yt/tiktok/ig/fb/x (decidir: Go puro o microservicio Node) | ⬜ |
 | B7 · Panel web | `/health`, `/queue`, `/memoria`, rotación de logs, unidad `systemd` | ⬜ |
 | B8 · Paridad de pruebas | portar las 161 pruebas del JS y sumar las nuevas | ⬜ |
@@ -65,7 +65,7 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 ## Lo que ya funciona (probado, no prometido)
 
-**Comandos cargados hoy: 84 únicos · 269 nombres · 4 hooks.**
+**Comandos cargados hoy: 131 únicos · 418 nombres · 4 hooks.**
 
 | Comando | Qué hace |
 |---|---|
@@ -110,6 +110,12 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 | `.cofre` · `.heal` · `.pocion` | cofre diario, curar salud/stamina con dinero y recuperar magia con poción |
 | `.sticker` (`.s`) | foto, vídeo o sticker → sticker de 512×512, con **13 formas** (`-c` círculo, `-v` corazón…) y **14 efectos** (`-sepia`, `-blur`…) |
 | `.toimg` · `.stickerinfo` | sticker → PNG o MP4 (**sin ezgif**: ffmpeg local) y datos del paquete del sticker |
+| `.tr inglés hola` | traducción con dos proveedores encadenados, detector de idioma propio y botón de copiar |
+| `.tts` · `.ia` | nota de voz del texto · IA con `GEMINI_KEY` (sin key explica cómo conseguirla, no finge) |
+| `.acortar` · `.crypto` · `.letra` | TinyURL con botones · BTC/ETH/SOL en USD y MXN · letra troceada |
+| `.githubstalk` · `.gitclone` | ficha de GitHub con avatar · lista 5 repos o baja el `.zip` (tope 45 MB) |
+| `.hd` · `.carbon` | mejora 2× + enfoque **local** · código → imagen **local** (sin subir nada a webs ajenas) |
+| `.ptv` · `.tourl` | vídeo redondo (límites reales del protocolo) · archivo → enlace temporal que caduca solo |
 
 ### Botones: catálogo completo
 
@@ -169,6 +175,8 @@ RICH_AI=0        # 1 = respuestas enriquecidas estilo IA (experimental)
 WORKERS=4        # mensajes que se atienden a la vez (1 = uno detrás de otro)
 QUEUE=128        # cuántos mensajes pueden esperar antes de descartar
 CHARACTERS_FILE=data/characters.json   # catálogo del gacha (si falta, lo dice)
+GEMINI_KEY=             # key de aistudio.google.com/apikey para .ai (vacío = .ai explica cómo pedirla)
+GEMINI_MODEL=gemini-1.5-flash
 
 # Direcciones de origen propias (opcional)
 RED_PREFIJO=          # p. ej. 2001:db8:1:2::/64 — vacío = IP del sistema
@@ -252,6 +260,9 @@ Shin-MD-Go/
 │   ├── ui/                   botones, tarjetas, fax (imagen), fuentes
 │   ├── wa/                   cliente, cola anti-ban, parseo, envíos, LID
 │   ├── bot/                  router, hooks, permisos de grupo, owners
+│   ├── apis/                 clientes de terceros del B5.2 (traducir, voz,
+│   │                         precios, GitHub, letra, subida, Gemini) — cada
+│   │                         URL es inyectable: las pruebas no tocan internet
 │   ├── gacha/                catálogo de personajes e ilustraciones
 │   ├── utilidades/           morse, QR dibujado en Go, parser de encuestas,
 │   │                         filtro anti-SSRF para `.get`
@@ -259,8 +270,8 @@ Shin-MD-Go/
 │                             advertencias y actividad de grupo, recordatorios)
 ├── docs/                     MIGRACION.md (plan) · BOTONES.md (catálogo)
 │                             ECONOMIA.md · GRUPOS.md · CAMBIOS.md · LID.md
-│                             SEGURIDAD.md · UTILIDADES.md · PERFIL.md
-│                             JUEGOS.md · STICKERS.md · OPERACION.md
+│                             SEGURIDAD.md · UTILIDADES.md · UTILIDADES2.md
+│                             PERFIL.md · JUEGOS.md · STICKERS.md · OPERACION.md
 └── Makefile
 ```
 
@@ -269,7 +280,7 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 347 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 392 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
                  # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
                  # advertencias y actividad de grupo, juegos de azar (probabilidad
@@ -288,6 +299,16 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.13.0** — bloque B5.2: **utilidades con API ajena, sobrias**. `.tr` con
+  dos proveedores encadenados y el detector de idioma propio del JS (28
+  idiomas, alias y todo), `.tts` con motor estable en vez del WebSocket
+  frágil de Edge, `.acortar`, `.crypto`, `.letra`, `.githubstalk`,
+  `.gitclone` y `.tourl`; `.hd` y `.carbon` dejan de subir tus cosas a webs
+  de terceros y pasan a ser **locales** (enfoque propio y renderer de código
+  con cero dependencias nuevas); `.ia`/`.ai` con `GEMINI_KEY` — el nombre
+  `ai` se recupera del placeholder `.rich` para la IA de verdad, como en el
+  bot de JS. `.benchdl` se queda en B6: medía el descargador que aún no
+  existe. Detalle en **[docs/UTILIDADES2.md](docs/UTILIDADES2.md)**.
 - **0.12.0** — bloque B5.1: **utilidades sin API ajena**. `.qr` (el QR se dibuja
   dentro del binario: el JS lo pedía a `api.qrserver.com`, así que sin internet
   el de antes no funcionaba), `.morse`/`.demorse`, `.recordar` + `.olvidar` con
