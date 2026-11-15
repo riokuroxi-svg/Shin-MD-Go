@@ -323,6 +323,10 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.1** — hotfix del instalador: `go.dev/dl/<tarball>.sha256` ya no sirve
+  el hash en crudo (devuelve un HTML intersticial y la verificación abortaba,
+  como debe ser). Las descargas de Go ahora van directas al CDN canónico
+  `dl.google.com/go/`. Encontrado probando `curl … | sh` en una máquina limpia.
 - **0.17.0** — **100% del catálogo**: las ~140 reacciones anime (shares.js)
   con waifu.pics y frases del JS; la economía del harem (.sell .buychar
   .trade .robwaifu .giveallharem…); los paquetes de stickers en SQLite (en RAM

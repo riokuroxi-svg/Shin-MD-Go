@@ -166,8 +166,10 @@ asegurar_go() {
   ejecutar mkdir -p "$TMPD" || true
 
   if [ -z "$DRY_RUN" ]; then
-    descargar "https://go.dev/dl/${TAR_GO}" "$TMPD/go.tgz" || morir "no pude bajar Go de go.dev"
-    descargar "https://go.dev/dl/${TAR_GO}.sha256" "$TMPD/go.sha256" || morir "no pude bajar la huella de Go"
+    # ojo: go.dev/dl/<nombre>.sha256 ya NO da el hash en crudo (devuelve un
+    # HTML intersticial); el CDN canónico dl.google.com sí lo sirve en texto.
+    descargar "https://dl.google.com/go/${TAR_GO}" "$TMPD/go.tgz" || morir "no pude bajar Go de go.dev"
+    descargar "https://dl.google.com/go/${TAR_GO}.sha256" "$TMPD/go.sha256" || morir "no pude bajar la huella de Go"
     ESPERADA=$(cat "$TMPD/go.sha256")
     HALLADA=$(huella "$TMPD/go.tgz")
     if [ -z "$HALLADA" ]; then
@@ -183,7 +185,7 @@ asegurar_go() {
     tar -C "$HOME/.local/sdk" -xzf "$TMPD/go.tgz" || morir "no pude descomprimir Go"
     rm -rf "$TMPD"
   else
-    dato "(dry-run) go.dev/dl/$TAR_GO → ~/.local/sdk/go + verificación SHA-256"
+    dato "(dry-run) dl.google.com/go/$TAR_GO → ~/.local/sdk/go + verificación SHA-256"
   fi
   PATH="$HOME/.local/sdk/go/bin:$PATH"; export PATH
   hay go || morir "instalé Go pero `go` no aparece en el PATH"
