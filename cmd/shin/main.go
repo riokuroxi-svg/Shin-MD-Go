@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.17.7"
+var version = "0.17.8"
 
 func main() {
 	var (
@@ -56,6 +56,16 @@ func main() {
 	// Esto debe ir ANTES del primer uso de red (WhatsApp viene más abajo).
 	if servidores := red.ArreglarDNSAndroid(); len(servidores) > 0 {
 		log.Info("◑ DNS Android: resolución directa vía " + strings.Join(servidores, " · "))
+	}
+
+	// Y su gemelo: TLS. Con CGO_ENABLED=0 (así se compila en Termux por el
+	// faccessat2), crypto/x509 solo mira /etc/ssl/… que en Android no existen:
+	// sin esta env, incluso con DNS arreglado, WhatsApp contestaría
+	// «x509: certificate signed by unknown authority» a todo.
+	if pem, esTermux := red.ArreglarCertificadosAndroid(); pem != "" {
+		log.Info("◑ TLS Android: raíces CA de " + pem)
+	} else if esTermux {
+		log.Warn("⚠ sin almacén de CA: ejecuta «pkg install ca-certificates» o TLS fallará")
 	}
 
 	// Log a archivo con rotación (4 MB × 3 backups): un bot que vive semanas

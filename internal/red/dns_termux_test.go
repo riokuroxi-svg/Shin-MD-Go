@@ -120,3 +120,35 @@ func TestResolvedorInstaladoResponde(t *testing.T) {
 	defer cancel()
 	_, _ = net.DefaultResolver.LookupHost(ctx, "ejemplo.invalid") // no debe colgar ni pánico
 }
+
+func TestPemDelPrefix(t *testing.T) {
+	dir := t.TempDir()
+	prefix := filepath.Join(dir, "usr")
+	tls := filepath.Join(prefix, "etc", "tls")
+	if err := os.MkdirAll(tls, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Sin archivo: cadena vacía y sin tocar la env.
+	t.Setenv("SSL_CERT_FILE", "")
+	if got := pemDelPrefix(prefix); got != "" {
+		t.Fatalf("sin .pem debió dar vacío, dio %q", got)
+	}
+	// Archivo vacío tampoco sirve.
+	pem := filepath.Join(tls, "cert.pem")
+	if err := os.WriteFile(pem, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := pemDelPrefix(prefix); got != "" {
+		t.Fatalf("pem vacío debió dar vacío, dio %q", got)
+	}
+	// Con contenido: aplica y señala.
+	if err := os.WriteFile(pem, []byte("-----BEGIN CERTIFICATE-----\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := pemDelPrefix(prefix); got != pem {
+		t.Fatalf("debió aplicar %q, dio %q", pem, got)
+	}
+	if os.Getenv("SSL_CERT_FILE") != pem {
+		t.Fatal("la env SSL_CERT_FILE no quedó puesta")
+	}
+}

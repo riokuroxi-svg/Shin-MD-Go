@@ -256,12 +256,26 @@ asegurar_dns() {
   fi
   if [ -n "$DRY_RUN" ]; then
     dato "(dry-run) crearía $PREFIX/etc/resolv.conf con 8.8.8.8 y 1.1.1.1"
-    return 0
+  else
+    mkdir -p "$PREFIX/etc"
+    printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > "$PREFIX/etc/resolv.conf" \
+      || aviso "no pude escribir $PREFIX/etc/resolv.conf; si el build falla con «lookup … [::1]:53», créalo tú con dos líneas «nameserver 8.8.8.8» y «nameserver 1.1.1.1»"
+    bien "DNS de Go arreglado ($PREFIX/etc/resolv.conf → 8.8.8.8 / 1.1.1.1; edítalo si prefieres otros)"
   fi
-  mkdir -p "$PREFIX/etc"
-  printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > "$PREFIX/etc/resolv.conf" \
-    || aviso "no pude escribir $PREFIX/etc/resolv.conf; si el build falla con «lookup … [::1]:53», créalo tú con dos líneas «nameserver 8.8.8.8» y «nameserver 1.1.1.1»"
-  bien "DNS de Go arreglado ($PREFIX/etc/resolv.conf → 8.8.8.8 / 1.1.1.1; edítalo si prefieres otros)"
+  # Su gemelo TLS: con CGO_ENABLED=0, crypto/x509 solo mira /etc/ssl/… que
+  # en Android no existe → «x509: certificate signed by unknown authority» en
+  # cada HTTPS. El almacén real es $PREFIX/etc/tls/cert.pem (paquete
+  # ca-certificates) y tanto el toolchain como el bot lo toman por
+  # SSL_CERT_FILE. Garantiza que exista:
+  if [ ! -s "$PREFIX/etc/tls/cert.pem" ]; then
+    if [ -n "$DRY_RUN" ]; then
+      dato "(dry-run) pkg install -y ca-certificates"
+    elif pkg install -y ca-certificates >/dev/null 2>&1; then
+      bien "ca-certificates instalado (almacén TLS de Termux)"
+    else
+      aviso "no pude instalar ca-certificates; si salen errores x509: pkg install ca-certificates"
+    fi
+  fi
 }
 
 # make tampoco se da por hecho: Termux y los contenedores mínimos no lo traen.
@@ -317,6 +331,13 @@ obtener_codigo() {
 compilar() {
   paso "Compilando"
   if [ -n "$DRY_RUN" ]; then dato "(dry-run) make build en $DIR"; return 0; fi
+  # Termux: las CA raíz no están en las rutas clásicas de Linux; sin esta env
+  # la fase HTTPS muere con «x509: certificate signed by unknown authority»
+  # en cuanto el DNS (abajo, si hizo falta) ya deja pasar.
+  if [ "$TERMUX" = 1 ] && [ -s "$PREFIX/etc/tls/cert.pem" ] && [ -z "${SSL_CERT_FILE:-}" ]; then
+    export SSL_CERT_FILE="$PREFIX/etc/tls/cert.pem"
+    dato "TLS del toolchain: SSL_CERT_FILE=$PREFIX/etc/tls/cert.pem"
+  fi
   if (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" make build); then
     bien "$DIR/dist/shin"; return 0
   fi

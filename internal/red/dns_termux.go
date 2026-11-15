@@ -15,6 +15,47 @@ import (
 	"time"
 )
 
+// esTermux detecta Android/Termux por sus env canónicas.
+func esTermux(prefix, termuxVersion string) bool {
+	return termuxVersion != "" || strings.Contains(prefix, "com.termux")
+}
+
+// ArreglarCertificadosAndroid apunta SSL_CERT_FILE al almacén de CA de
+// Termux cuando hace falta. Compilado con CGO_ENABLED=0, crypto/x509 solo
+// mira las rutas clásicas de Linux (/etc/ssl/certs, /etc/pki…), que en
+// Android no existen: TODA conexión TLS moriría con «x509: certificate
+// signed by unknown authority». El almacén real de Termux vive en
+// $PREFIX/etc/tls/cert.pem (paquete ca-certificates) y Go respeta la env
+// SSL_CERT_FILE en linux. Es lo «segundo clásico» tras el DNS.
+//
+// Devuelve (ruta aplicada o "", si el terreno es Termux). Si ya hay una
+// SSL_CERT_FILE puesta por el usuario, se respeta y no se toca.
+func ArreglarCertificadosAndroid() (string, bool) {
+	prefix := os.Getenv("PREFIX")
+	if !esTermux(prefix, os.Getenv("TERMUX_VERSION")) {
+		return "", false
+	}
+	if os.Getenv("SSL_CERT_FILE") != "" {
+		return "", true // el usuario ya fijó la suya: no estorbar
+	}
+	return pemDelPrefix(prefix), true
+}
+
+// pemDelPrefix decide la ruta .pem válida bajo $PREFIX — testeable aparte.
+// Devuelve "" si no hay un archivo real con contenido.
+func pemDelPrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	pem := filepath.Join(prefix, "etc", "tls", "cert.pem")
+	st, err := os.Stat(pem)
+	if err != nil || !st.Mode().IsRegular() || st.Size() == 0 {
+		return ""
+	}
+	_ = os.Setenv("SSL_CERT_FILE", pem)
+	return pem
+}
+
 // ArreglarDNSAndroid devuelve y aplica los servidores DNS que el bot usará
 // cuando el terreno es Termux/Android y el resolvedor normal de Go está
 // ciego: con CGO_ENABLED=0 netgo lee /etc/resolv.conf, que en Android no

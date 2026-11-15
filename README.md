@@ -323,6 +323,14 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.8** — Termux: **TLS raíz resuelto**. Después del DNS vino su gemelo:
+  «x509: certificate signed by unknown authority» en cada HTTPS. Con
+  `CGO_ENABLED=0`, crypto/x509 solo mira las rutas clásicas de Linux
+  (`/etc/ssl/certs/…`) que Android no tiene. El instalador asegura el paquete
+  `ca-certificates` y exporta `SSL_CERT_FILE=$PREFIX/etc/tls/cert.pem` para
+  el toolchain; y el bot, en runtime, fija esa misma env por código
+  (`red.ArreglarCertificadosAndroid`) si el usuario no la fijó antes — sin
+  esto, aunque arrancara, WhatsApp le diría lo mismo en cada conexión.
 - **0.17.7** — Termux: **DNS que funciona de verdad, en dos niveles**.
   El parche del toolchain (que lee `$PREFIX/etc/resolv.conf`) no muerde en
   todas las builds de go1.27.x — visto en un teléfono real con el archivo
