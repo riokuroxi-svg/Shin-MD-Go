@@ -323,6 +323,17 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.9** — Termux: **compilación en proot serializada contra el SIGSYS.
+  Cuarta barrera, del *compilador* esta vez: con DNS y TLS ya resueltos,
+  `go build` explotaba en `syscall.faccessat2 → os/exec.LookPath` (stack
+  de `cmd/go` pura): el CLI busca su herramienta interna desde gorutinas
+  del build, y los kernels Android 13+ matan cualquier `faccessat2` con
+  SIGSYS antes de poder caer a `faccessat`. El instalador ya no gasta el
+  segundo intento en `netdns=cgo` (probado inerte en go1.27.3): salta a
+  **proot + `GOMAXPROCS=1`**, que serializa esas llamadas hasta dejarlas
+  inocuas — solo posible porque la cache modular quedó llena en el build
+  anterior (no hay red dentro de este proot). Si aún falla, plan B: proot
+  cómodo.
 - **0.17.8** — Termux: **TLS raíz resuelto**. Después del DNS vino su gemelo:
   «x509: certificate signed by unknown authority» en cada HTTPS. Con
   `CGO_ENABLED=0`, crypto/x509 solo mira las rutas clásicas de Linux

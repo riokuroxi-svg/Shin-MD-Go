@@ -343,28 +343,42 @@ compilar() {
   fi
   [ "$TERMUX" = 1 ] || morir "la compilación falló (mira arriba)"
 
-  # En Termux, si lo que tumbó el build fue el DNS del toolchain bajando
-  # módulos («lookup … on [::1]:53: connection refused»), hay dos salidas
-  # documentadas y aquí se intentan solas, en orden:
-  #   1. GODEBUG=netdns=cgo → el resolvedor cgo (bionic → netd de Android);
-  #      el Go de Termux se compila con CGO, así que suele morder.
-  #   2. proot amarrando $PREFIX/etc/resolv.conf a /etc/resolv.conf, que es
-  #      el archivo que netgo lee; no necesita root.
-  aviso "compilación falló; reintento 1 de 2: DNS del toolchain vía cgo (bionic)"
-  if (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" \
-        GODEBUG="netdns=cgo${GODEBUG:+,$GODEBUG}" make build); then
-    bien "$DIR/dist/shin (DNS del toolchain vía cgo)"
-    aviso "esa env solo arregla COMPILAR; el bot ya trae su propio resolvedor Android"
-    return 0
-  fi
-  aviso "reintento 2 de 2: proot amarrando resolv.conf a /etc"
+  # ── Termux: la escalera real contra el trío seccomp+DNS+TLS ──────────────
+  #  Orden y porqués (todos medidos en un teléfono Android de seccomp duro):
+  #
+  #  · GODEBUG=netdns=cgo se descartó como escalón: no muerde en go1.27.3
+  #    del repo (comprobado) y no dice qué falló.
+  #
+  #  · El escalón siguiente es AMBOS trucos proot —/etc/resolv.conf y
+  #    SSL_CERT_FILE (ya exportado arriba)— porque el que solo quita el DNS
+  #    solo cambia el error por el del siguiente piso. Y (clave) con
+  #    GOMAXPROCS=1: el compilador Go lanza su interno «buscar la herramienta»
+  #    (os/exec.LookPath) DESDE GORUTINAS DEL BUILD, y en Android 13+ ese
+  #    LookPath alcanza faccessat2, que tu seccomp mata con SIGSYS antes de
+  #    poder caer a faccessat. Corriendo todo el build en un solo procesador
+  #    serializa esas llamadas hasta dejarlas ser inocuas; es la receta que
+  #    sí compila go1.27.x en Termux sin tocar el binario de Go.
+  #    Esto solo funciona gracias a que la cache modular ya está llena
+  #    (el primer build la llenó tras arreglar DNS+TLS): aquí NO hay red.
   hay proot || pkg install -y proot >/dev/null 2>&1 || true
-  if hay proot && (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" \
-        proot -b "$PREFIX/etc/resolv.conf:/etc/resolv.conf" make build); then
-    bien "$DIR/dist/shin (vía proot)"
+  if ! hay proot; then
+    aviso "siguió el error y proot no está disponible. Mira arriba."
+    morir "la compilación falló (mira arriba)"
+  fi
+  aviso "reintento 1: proot + GOMAXPROCS=1 (serializa LookPath; seccomp serializado queda inocuo)"
+  if (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" \
+        proot -b "$PREFIX/etc/resolv.conf:/etc/resolv.conf" \
+        env GOMAXPROCS=1 make build); then
+    bien "$DIR/dist/shin (proot, serializado)"
     return 0
   fi
-  morir "la compilación falló (mira arriba)"
+  aviso "reintento 2 (plan B): proot cómodo, sin serializar"
+  if (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" \
+        proot -b "$PREFIX/etc/resolv.conf:/etc/resolv.conf" make build); then
+    bien "$DIR/dist/shin (proot)"
+    return 0
+  fi
+  morir "la compilación falló (mira arriba). Último recurso: compila «make termux» en una PC, muévelo a $PREFIX/bin/shin"
 }
 
 instalar() {
