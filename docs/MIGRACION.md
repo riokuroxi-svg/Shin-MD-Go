@@ -106,7 +106,7 @@ Traducción honesta:
 | `src/storage/database.js` + `migrations.js` | `internal/store/{db,store}.go` | SQLite puro Go (`modernc.org/sqlite`), sin cgo |
 | `src/services/logger.js` (chalk + rotación) | `internal/xlog` + `log/slog` + rotación propia | mismos iconos ◐ ◑ ✓ ✕ |
 | `src/services/anti-crash.js`, `memory-monitor`, `temp-cleaner` | `recover()` en el router + un goroutine de limpieza | en Go el "OOM del runtime" ya no aplica igual |
-| `src/web/server.js` (express + Basic auth) | `net/http` + `html/template` | failsafe LOOPBACK y chmod 600 se conservan |
+| `src/web/server.js` (express + Basic auth) | `internal/web/web.go` (`net/http` pelado) | **B7 (0.14.0)** — failsafe LOOPBACK conservado; auth por SHA-256 en tiempo constante + candado 10/5 min igual que el JS |
 | `cmds/**/*.js` (217 archivos) | `cmds/*.go` | se portan por bloques (§6) |
 | `cmds/utils/{translate,acortar,crypto,githubstalk,gitclone,letra,tourl,tts,chatgpt,hd,carbon,ptv}.js` + `src/lib/translate.js` | `cmds/utilidades2.go` + `internal/apis/*` + `internal/media/mejorar.go` + `internal/ui/carbon.go` | **B5.2 (0.13.0)** — translate se porta con sus 2 proveedores y el detector propio; `.hd`/`.carbon` pasan a ser locales; `benchdl.js` queda para B6 |
 | `scripts/patch-baileys-pairing.cjs` | — | **se elimina**, no hace falta |

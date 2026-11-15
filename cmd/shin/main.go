@@ -11,8 +11,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,10 +26,11 @@ import (
 	"shin-go/internal/red"
 	"shin-go/internal/store"
 	"shin-go/internal/wa"
+	"shin-go/internal/web"
 	"shin-go/internal/xlog"
 )
 
-var version = "0.13.0"
+var version = "0.14.0"
 
 func main() {
 	var (
@@ -45,6 +48,20 @@ func main() {
 
 	cfg := config.Load()
 	log := xlog.New(cfg.LogLevel, os.Stdout)
+
+	// Log a archivo con rotación (4 MB × 3 backups): un bot que vive semanas
+	// en Termux no puede fiarlo todo a la consola. LOG_FILE=off lo desactiva.
+	// Si el disco está lleno o no hay permisos, se avisa y se sigue solo con
+	// stdout: el log es un extra, no una razón para no arrancar.
+	if cfg.LogFile != "" && !strings.EqualFold(cfg.LogFile, "off") {
+		if rot, err := xlog.AbrirRotativo(cfg.LogFile, 4<<20, 3); err != nil {
+			log.Warn("no se pudo abrir " + cfg.LogFile + ": " + err.Error())
+		} else {
+			log = xlog.New(cfg.LogLevel, io.MultiWriter(os.Stdout, rot))
+			defer rot.Cerrar()
+			log.Info("Log: " + cfg.LogFile + " (rotación 4 MB × 3)")
+		}
+	}
 	if cfg.EnvFile != "" {
 		log.Info("Configuración: .env cargado desde " + cfg.EnvFile)
 	}
@@ -141,6 +158,27 @@ func main() {
 	snap := client.Queue.Snapshot()
 	log.Info(fmt.Sprintf("Calentamiento: desde %s · cupo de hoy %d mensajes no prioritarios",
 		snap.Anchor.Format("02/01/2006"), snap.Budget))
+
+	// Panel web local (B7): /health /queue /memoria /metrics. Escucha en
+	// 127.0.0.1 salvo LOOPBACK=0 con PANEL_PASSWORD (failsafe en web.Nuevo).
+	panel := web.Nuevo(web.Config{
+		Puerto:   cfg.WebPort,
+		Publico:  cfg.PanelPublic,
+		Password: cfg.PanelPass,
+	}, func() web.Estado {
+		s := client.Queue.Snapshot()
+		d := despachador.Stats()
+		return web.Estado{
+			Conectado: client.WA.IsConnected(), Version: version,
+			Arranque:  client.StartedAt,
+			SentToday: s.SentToday, Budget: s.Budget, ModoLento: s.Slowed,
+			Anchor:  s.Anchor.Format("02/01/2006"),
+			Workers: d.Workers, EnCola: d.EnCola, ColaMax: d.Cola,
+			Recibidos: d.Recibidos, Procesados: d.Procesados, Descartados: d.Descartados,
+		}
+	}, log.Info)
+	panel.Arrancar(ctx)
+
 	log.Ok("Shin-MD en marcha. Ctrl+C para salir.")
 	<-ctx.Done()
 	log.Info("Cerrando limpio…")

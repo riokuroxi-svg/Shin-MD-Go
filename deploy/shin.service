@@ -1,0 +1,42 @@
+# Shin-MD-Go — Copyright (C) 2026 riokuroxi-svg · AGPL-3.0-only
+#
+# shin.service — unidad systemd (bloque B7)
+#
+# Instalación:
+#   sudo cp dist/shin /opt/shin/shin && sudo cp .env /opt/shin/.env
+#   sudo cp deploy/shin.service /etc/systemd/system/shin.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now shin
+#
+# Ver:   journalctl -u shin -f
+# El binario se cierra limpio con SIGTERM (shotdown notify), así que los
+# reinicios no dejan la sesión a medias.
+[Unit]
+Description=Shin-MD (Go) — bot de WhatsApp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/shin
+ExecStart=/opt/shin/shin
+Restart=on-failure
+RestartSec=5s
+# Sin límite de reinicios bruscos: si la base está rota el bot sale con
+# código 1 y systemd espera RestartSec; no hay bucle infinito agresivo.
+StandardOutput=journal
+StandardError=journal
+
+# Duración razonable para cerrar la cola de envío antes del SIGKILL.
+TimeoutStopSec=10s
+
+# Endurecimiento básico: el bot no necesita nada de esto.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+# ReadWritePaths para los datos y el log (STATE_DIR). Si cambias el
+# WorkingDirectory, cambia esto igual.
+ReadWritePaths=/opt/shin/data
+
+[Install]
+WantedBy=multi-user.target

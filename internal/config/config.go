@@ -35,6 +35,15 @@ type Config struct {
 	RichAI   bool   // RICH_AI=1: respuestas enriquecidas estilo IA (experimental)
 	EnvFile  string // ruta del .env que se leyó ("" si no había)
 
+	// Panel web (B7): mismos nombres de variable que el bot de JS.
+	WebPort     int    // PORT (defecto 3000)
+	PanelPublic bool   // LOOPBACK=0: exponer el panel fuera de 127.0.0.1
+	PanelPass   string // PANEL_PASSWORD: sin ella el failsafe vuelve a loopback
+
+	// Log a archivo con rotación (4 MB × 3). LOG_FILE=off lo apaga y queda
+	// solo stdout (que es lo que journald recoge si usas systemd).
+	LogFile string // LOG_FILE (por defecto data/shin.log)
+
 	// GachaFile: catálogo de personajes (mismo nombre de variable que el bot
 	// de JS: CHARACTERS_FILE). Si el archivo no está, el gacha lo dice una vez
 	// y sigue funcionando con el catálogo vacío en vez de romper.
@@ -153,6 +162,9 @@ func LoadFrom(envPath string) Config {
 		LogLevel:    vars.str("LOG_LEVEL", "info"),
 		RichAI:      vars.str("RICH_AI", "0") == "1",
 		EnvFile:     used,
+		WebPort:     vars.num("PORT", 3000, 1, 65535),
+		PanelPublic: vars.str("LOOPBACK", "1") == "0",
+		PanelPass:   vars.str("PANEL_PASSWORD", ""),
 		GachaFile:   vars.str("CHARACTERS_FILE", filepath.Join(stateDir, "characters.json")),
 		BotName:     vars.str("BOT_NAME", "SHIN-MD"),
 		Workers:     vars.num("WORKERS", 4, 1, 16),
@@ -162,6 +174,7 @@ func LoadFrom(envPath string) Config {
 		RedVentana:  time.Duration(vars.num("RED_VENTANA", 60, 1, 3600)) * time.Second,
 		StickerPack: vars.str("STICKER_PACK", "Shin-MD-Go"),
 		StickerAuth: vars.str("STICKER_AUTHOR", "riokuroxi-svg"),
+		LogFile:     vars.str("LOG_FILE", filepath.Join(stateDir, "shin.log")),
 		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",
 		OwnerName:   vars.str("OWNER_NAME", "el dueño"),
 		OwnerNumber: vars.str("OWNER_NUMBER", ""),

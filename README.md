@@ -58,7 +58,7 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B7.0 · Operación y estado** | `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart` `.update` `.subir` `.cache` `.shell` `.setmenu` | ✅ **hecho** ([docs/OPERACION.md](docs/OPERACION.md)) |
 | **B5.2 · Utilidades (2/2)** | `.traducir` (2 proveedores + detector propio) `.tts` `.acortar` `.tourl` `.crypto` `.letra` `.gitclone` `.githubstalk` `.ai` (con `GEMINI_KEY`) y `.hd` + `.carbon` **locales** (sin subir nada a webs ajenas); `.benchdl` queda para B6 | ✅ **hecho** ([docs/UTILIDADES2.md](docs/UTILIDADES2.md)) |
 | B6 · Descargas | play/yt/tiktok/ig/fb/x (decidir: Go puro o microservicio Node) | ⬜ |
-| B7 · Panel web | `/health`, `/queue`, `/memoria`, rotación de logs, unidad `systemd` | ⬜ |
+| **B7 · Panel web** | `/health` `/queue` `/memoria` `/metrics` con failsafe loopback + Basic auth con candado, **rotación de logs** (4 MB × 3), unidad `systemd` | ✅ **hecho** ([docs/PANEL.md](docs/PANEL.md)) |
 | B8 · Paridad de pruebas | portar las 161 pruebas del JS y sumar las nuevas | ⬜ |
 
 Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
@@ -178,6 +178,12 @@ CHARACTERS_FILE=data/characters.json   # catálogo del gacha (si falta, lo dice)
 GEMINI_KEY=             # key de aistudio.google.com/apikey para .ai (vacío = .ai explica cómo pedirla)
 GEMINI_MODEL=gemini-1.5-flash
 
+# Panel web (B7) — escucha en 127.0.0.1 salvo LOOPBACK=0 (que exige clave)
+PORT=3000
+LOOPBACK=1
+PANEL_PASSWORD=
+LOG_FILE=data/shin.log   # rotación 4 MB × 3 · «off» = solo stdout
+
 # Direcciones de origen propias (opcional)
 RED_PREFIJO=          # p. ej. 2001:db8:1:2::/64 — vacío = IP del sistema
 RED_MAX_POR_IP=50     # peticiones por dirección dentro de la ventana
@@ -256,7 +262,8 @@ Shin-MD-Go/
 ├── cmds/                     1 archivo .go = 1 comando (equivalen a cmds/**/*.js)
 ├── internal/
 │   ├── config/               .env
-│   ├── xlog/                 logger con los iconos ◐ ◑ ✓ ✕
+│   ├── xlog/                 logger con los iconos ◐ ◑ ✓ ✕ y rotación propia
+│   ├── web/                  panel HTTP (/, /health, /queue, /memoria, /metrics)
 │   ├── ui/                   botones, tarjetas, fax (imagen), fuentes
 │   ├── wa/                   cliente, cola anti-ban, parseo, envíos, LID
 │   ├── bot/                  router, hooks, permisos de grupo, owners
@@ -272,6 +279,7 @@ Shin-MD-Go/
 │                             ECONOMIA.md · GRUPOS.md · CAMBIOS.md · LID.md
 │                             SEGURIDAD.md · UTILIDADES.md · UTILIDADES2.md
 │                             PERFIL.md · JUEGOS.md · STICKERS.md · OPERACION.md
+│                             PANEL.md
 └── Makefile
 ```
 
@@ -299,6 +307,13 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.14.0** — bloque B7: **panel web y operación real**. `/health` `/queue`
+  `/memoria` `/metrics` por HTTP en loopback (express → `net/http` pelado),
+  con el failsafe del JS (LOOPBACK=0 sin clave vuelve a 127.0.0.1), Basic
+  auth comparada por SHA-256 en tiempo constante y candado de 10 fallos/5
+  min. El log por fin va a archivo de verdad: `data/shin.log` con rotación
+  propia de 4 MB × 3 (una dependencia menos), y `deploy/shin.service` para
+  que systemd lo reinicie sin PM2. Detalle en **[docs/PANEL.md](docs/PANEL.md)**.
 - **0.13.0** — bloque B5.2: **utilidades con API ajena, sobrias**. `.tr` con
   dos proveedores encadenados y el detector de idioma propio del JS (28
   idiomas, alias y todo), `.tts` con motor estable en vez del WebSocket
