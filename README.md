@@ -323,6 +323,13 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.2** — hotfix de dependencias: el `go.mod` fijado no compilaba en una
+  máquina limpia (el resolver de Go trataba varias versiones fijadas —x/sys
+  v0.48, sqlite v1.44.3, libc v1.67.6— como si no proveyeran sus paquetes;
+  nuestras máquinas de desarrollo no lo veían por caché caliente). Un
+  `go mod tidy` con el toolchain real sube a x/sys v0.50, sqlite v1.62,
+  libc v1.81.1… y la suite entera (16 paquetes + race) sigue en verde.
+  Encontrado ejecutando el instalador público en una máquina sin caché.
 - **0.17.1** — hotfix del instalador: `go.dev/dl/<tarball>.sha256` ya no sirve
   el hash en crudo (devuelve un HTML intersticial y la verificación abortaba,
   como debe ser). Las descargas de Go ahora van directas al CDN canónico
