@@ -229,14 +229,17 @@ func (s *Store) ActivityOf(ctx context.Context, chatID string, since time.Time) 
 // Claves de ajustes por chat. Son las mismas palabras que usa el JS para que
 // una base migrada se lea sin traducción.
 const (
-	KeyWelcome    = "welcome"
-	KeyGoodbye    = "goodbye"
-	KeySetWelcome = "setwelcome"
-	KeySetGoodbye = "setgoodbye"
-	KeyWarnLimit  = "warnlimit"
-	KeyExpulsar   = "expulsar"
-	KeyAntiStatus = "antistatus"
-	KeyBotOff     = "bot"
+	KeyWelcome      = "welcome"
+	KeyGoodbye      = "goodbye"
+	KeySetWelcome   = "setwelcome"
+	KeySetGoodbye   = "setgoodbye"
+	KeyWarnLimit    = "warnlimit"
+	KeyExpulsar     = "expulsar"
+	KeyAntiStatus   = "antistatus"
+	KeyBotOff       = "bot"
+	KeyAlerts       = "alerts"       // avisos del grupo (entradas/salidas)
+	KeyAutoTraducir = "autotraducir" // traduce debajo lo que no suene a español
+	KeyPrimary      = "primarybot"   // cuándo hay varios bots en el chat
 )
 
 // Flag lee un ajuste sí/no del chat (por defecto, `def`).

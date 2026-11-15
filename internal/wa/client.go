@@ -245,6 +245,9 @@ func (c *Client) SendTextID(ctx context.Context, chat types.JID, text string, pr
 		id = resp.ID
 		return nil
 	})
+	if err == nil {
+		c.recuerdaEnviado(chat, id)
+	}
 	return id, err
 }
 
@@ -273,6 +276,9 @@ func (c *Client) SendImageID(ctx context.Context, chat types.JID, data []byte, c
 		id = resp.ID
 		return nil
 	})
+	if err == nil {
+		c.recuerdaEnviado(chat, id)
+	}
 	return id, err
 }
 
@@ -313,6 +319,9 @@ func (c *Client) SendProto(ctx context.Context, chat types.JID, msg *waE2E.Messa
 		id = resp.ID
 		return nil
 	})
+	if err == nil {
+		c.recuerdaEnviado(chat, id)
+	}
 	return id, err
 }
 

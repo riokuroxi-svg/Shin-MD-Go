@@ -910,7 +910,7 @@ func registerActivity() {
 
 	bot.Register(bot.Command{
 		Name:      "topinactive",
-		Aliases:   []string{"topinactivos", "inactivos"},
+		Aliases:   []string{"topinactivos", "inactivos", "topinactiveusers"},
 		Category:  bot.CatGroup,
 		Desc:      "Quiénes no han escrito en 30 días",
 		GroupOnly: true,

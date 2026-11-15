@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -241,4 +242,61 @@ func (c *Client) KickLote(ctx context.Context, group types.JID, quienes []types.
 		}
 	}
 	return hechos, errores, nil
+}
+
+// ── anillo de mensajes enviados (para .clear) ───────────────────────────────
+
+// recientes guarda los últimos id que el bot mandó por chat; .clear los
+// revoca. El JS guardaba toda la lista en RAM; aquí 64 por chat basta (un
+// .clear raro pide más que un rato de charla).
+const maxRecientes = 64
+
+var (
+	muRecientes sync.Mutex
+	recientes   = map[types.JID][]string{}
+)
+
+func (c *Client) recuerdaEnviado(chat types.JID, id string) {
+	if id == "" {
+		return
+	}
+	muRecientes.Lock()
+	lista := recientes[chat]
+	lista = append(lista, id)
+	if len(lista) > maxRecientes {
+		lista = lista[len(lista)-maxRecientes:]
+	}
+	recientes[chat] = lista
+	muRecientes.Unlock()
+}
+
+// LimpiarMios revoca hasta n mensajes propios recientes en el chat y dice
+// cuántos borró de verdad (el JS también solo podía con los suyos).
+func (c *Client) LimpiarMios(ctx context.Context, chat types.JID, n int) (int, error) {
+	muRecientes.Lock()
+	lista := recientes[chat]
+	muRecientes.Unlock()
+	if len(lista) == 0 {
+		return 0, nil
+	}
+	if n <= 0 || n > len(lista) {
+		n = len(lista)
+	}
+	ultimos := lista[len(lista)-n:]
+	borrados := 0
+	for i := len(ultimos) - 1; i >= 0; i-- {
+		if err := c.Queue.Do(ctx, 1, true, func() error {
+			_, err := c.WA.RevokeMessage(ctx, chat, ultimos[i])
+			return err
+		}); err == nil {
+			borrados++
+		}
+	}
+	muRecientes.Lock()
+	recientes[chat] = lista[:len(lista)-borrados]
+	if len(recientes[chat]) == 0 {
+		delete(recientes, chat)
+	}
+	muRecientes.Unlock()
+	return borrados, nil
 }
