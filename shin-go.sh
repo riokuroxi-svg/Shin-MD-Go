@@ -241,6 +241,29 @@ asegurar_ytdlp() {
   PATH="$HOME/.local/bin:$PATH"; export PATH
 }
 
+# Termux: el resolvedor puro de Go (netgo — el del toolchain y, al compilar
+# con CGO_ENABLED=0, también el del bot) no lee las propiedades DNS de bionic
+# como hacen los binarios C; lee $PREFIX/etc/resolv.conf. Si falta, TODA la
+# resolución muere: «lookup proxy.golang.org on [::1]:53: connection refused».
+# Los binarios C (pkg, git, curl) sí funcionaban, así que el síntoma engaña:
+# parece "sin internet" cuando solo Go está ciego. Se crea UNA VEZ y nunca
+# se pisa una configuración existente del usuario.
+asegurar_dns() {
+  [ "$TERMUX" = 1 ] || return 0
+  if [ -s "$PREFIX/etc/resolv.conf" ]; then
+    dato "DNS de Go: $PREFIX/etc/resolv.conf ya existe"
+    return 0
+  fi
+  if [ -n "$DRY_RUN" ]; then
+    dato "(dry-run) crearía $PREFIX/etc/resolv.conf con 8.8.8.8 y 1.1.1.1"
+    return 0
+  fi
+  mkdir -p "$PREFIX/etc"
+  printf 'nameserver 8.8.8.8\nnameserver 1.1.1.1\n' > "$PREFIX/etc/resolv.conf" \
+    || aviso "no pude escribir $PREFIX/etc/resolv.conf; si el build falla con «lookup … [::1]:53», créalo tú con dos líneas «nameserver 8.8.8.8» y «nameserver 1.1.1.1»"
+  bien "DNS de Go arreglado ($PREFIX/etc/resolv.conf → 8.8.8.8 / 1.1.1.1; edítalo si prefieres otros)"
+}
+
 # make tampoco se da por hecho: Termux y los contenedores mínimos no lo traen.
 asegurar_make() {
   if hay make; then bien "make presente"; return 0; fi
@@ -372,6 +395,7 @@ dato "entorno: $ENTORNO · $ARQ"
 asegurar_git
 asegurar_make
 asegurar_go
+asegurar_dns
 asegurar_ytdlp
 obtener_codigo
 compilar

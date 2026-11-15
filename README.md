@@ -323,6 +323,12 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.6** — Termux: el instalador crea `$PREFIX/etc/resolv.conf` (si no
+  existe) con 8.8.8.8/1.1.1.1. Motivo: el resolvedor puro de Go —el del
+  toolchain y, con `CGO_ENABLED=0`, también el del bot— no lee las
+  propiedades DNS de bionic como los binarios C; sin ese archivo toda la
+  red de Go muere con «lookup … on [::1]:53: connection refused» aunque
+  pkg/git/curl funcionen. Nunca pisa una configuración existente.
 - **0.17.5** — **Termux: SIGSYS por `faccessat2`, reparado en build y
   runtime** (reporte desde un teléfono real). Varios kernels de Android
   vetan esa syscall por seccomp y responden matando el proceso, sin error
