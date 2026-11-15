@@ -323,6 +323,11 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.3** — instalador más listo en Termux: Go llega vía `pkg install
+  golang` (el tar de go.dev es GOOS=linux y en Android tropieza con DNS y
+  los certificados del sistema) y se comprueba `make` (`pkg/apt/apk` según
+  toque). Mensaje honesto del arranque automático: requiere la app
+  Termux:Boot.
 - **0.17.2** — hotfix de dependencias: el `go.mod` fijado no compilaba en una
   máquina limpia (el resolver de Go trataba varias versiones fijadas —x/sys
   v0.48, sqlite v1.44.3, libc v1.67.6— como si no proveyeran sus paquetes;

@@ -155,6 +155,21 @@ asegurar_go() {
     aviso "Go $V es viejo (pido $GO_VERSION); instalo uno aparte en ~/.local"
   fi
 
+  # Termux: el tar oficial de go.dev es GOOS=linux y en Android se tropieza
+  # con DNS (/etc/resolv.conf no existe) y con los certificados CA del
+  # sistema. El paquete `golang` de Termux está compilado PARA Android y
+  # no tiene esos problemas: es la vía correcta aquí.
+  if [ "$TERMUX" = 1 ] && hay pkg && [ -z "$DRY_RUN" ]; then
+    paso "Instalando Go (pkg install golang — nativo de Android)"
+    pkg install -y golang || aviso "pkg golang falló; intento con el tar de go.dev"
+    if hay go; then
+      bien "$(go version | cut -d' ' -f3) vía pkg"
+      return 0
+    fi
+  elif [ "$TERMUX" = 1 ]; then
+    dato "(dry-run) pkg install -y golang"
+  fi
+
   paso "Descargando Go $GO_VERSION ($SO/$ARQ)"
   SO_GO=$(printf '%s' "$SO" | tr 'A-Z' 'a-z')   # go.dev nombra los tarballs en minúscula
   caso_go="$SO_GO-$ARQ"
@@ -209,6 +224,24 @@ asegurar_ytdlp() {
     dato "(dry-run) bajaría yt-dlp standalone a ~/.local/bin"
   fi
   PATH="$HOME/.local/bin:$PATH"; export PATH
+}
+
+# make tampoco se da por hecho: Termux y los contenedores mínimos no lo traen.
+asegurar_make() {
+  if hay make; then bien "make presente"; return 0; fi
+  if [ "$TERMUX" = 1 ]; then
+    paso "Instalando make (pkg)"
+    ejecutar pkg install -y make || morir "pkg no pudo instalar make"
+  elif [ "$ROOT" = 1 ] && hay apt-get; then
+    paso "Instalando make (apt)"
+    ejecutar apt-get install -y make || morir "apt no pudo instalar make"
+  elif [ "$ROOT" = 1 ] && hay apk; then
+    paso "Instalando make (apk)"
+    ejecutar apk add make || morir "apk no pudo instalar make"
+  else
+    morir "falta make y no puedo instalarlo sin root (apt install make / pkg install make). go build a mano también sirve: go build -o dist/shin ./cmd/shin"
+  fi
+  bien "make instalado"
 }
 
 # ─────────────────────────── el bot ───────────────────────────
@@ -290,8 +323,8 @@ arrancar() {
 cd "$PREFIX/bin" && exec "$PREFIX/bin/shin" >> "\$HOME/shin.log" 2>&1
 ARRANQUE
       chmod +x "$HOME/.termux/boot/shin"
-      bien "arranque automático al abrir Termux (~/.termux/boot/shin)"
-      dato "para arrancarlo ahora:  cd $PREFIX/bin && ./shin"
+      bien "arranque al encender el teléfono, si tienes la app Termux:Boot (~/.termux/boot/shin)"
+      dato "para arrancarlo ahora:  shin        (o ./shin desde $PREFIX/bin)"
     else
       dato "(dry-run) script de arranque de Termux"
     fi
@@ -322,6 +355,7 @@ dato "entorno: $ENTORNO · $ARQ"
 [ -n "$DRY_RUN" ] && aviso "DRY-RUN: cuento qué haría, no ejecuto nada"
 
 asegurar_git
+asegurar_make
 asegurar_go
 asegurar_ytdlp
 obtener_codigo
