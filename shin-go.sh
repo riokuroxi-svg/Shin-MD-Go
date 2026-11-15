@@ -317,9 +317,33 @@ obtener_codigo() {
 compilar() {
   paso "Compilando"
   if [ -n "$DRY_RUN" ]; then dato "(dry-run) make build en $DIR"; return 0; fi
-  (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" make build) \
-    || morir "la compilación falló (mira arriba)"
-  bien "$DIR/dist/shin"
+  if (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" make build); then
+    bien "$DIR/dist/shin"; return 0
+  fi
+  [ "$TERMUX" = 1 ] || morir "la compilación falló (mira arriba)"
+
+  # En Termux, si lo que tumbó el build fue el DNS del toolchain bajando
+  # módulos («lookup … on [::1]:53: connection refused»), hay dos salidas
+  # documentadas y aquí se intentan solas, en orden:
+  #   1. GODEBUG=netdns=cgo → el resolvedor cgo (bionic → netd de Android);
+  #      el Go de Termux se compila con CGO, así que suele morder.
+  #   2. proot amarrando $PREFIX/etc/resolv.conf a /etc/resolv.conf, que es
+  #      el archivo que netgo lee; no necesita root.
+  aviso "compilación falló; reintento 1 de 2: DNS del toolchain vía cgo (bionic)"
+  if (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" \
+        GODEBUG="netdns=cgo${GODEBUG:+,$GODEBUG}" make build); then
+    bien "$DIR/dist/shin (DNS del toolchain vía cgo)"
+    aviso "esa env solo arregla COMPILAR; el bot ya trae su propio resolvedor Android"
+    return 0
+  fi
+  aviso "reintento 2 de 2: proot amarrando resolv.conf a /etc"
+  hay proot || pkg install -y proot >/dev/null 2>&1 || true
+  if hay proot && (cd "$DIR" && PATH="$HOME/.local/sdk/go/bin:$PATH" \
+        proot -b "$PREFIX/etc/resolv.conf:/etc/resolv.conf" make build); then
+    bien "$DIR/dist/shin (vía proot)"
+    return 0
+  fi
+  morir "la compilación falló (mira arriba)"
 }
 
 instalar() {

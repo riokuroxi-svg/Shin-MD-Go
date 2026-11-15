@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.17.6"
+var version = "0.17.7"
 
 func main() {
 	var (
@@ -48,6 +48,15 @@ func main() {
 
 	cfg := config.Load()
 	log := xlog.New(cfg.LogLevel, os.Stdout)
+
+	// Termux/Android: sin /etc/resolv.conf el resolvedor puro de Go pregunta
+	// a 127.0.0.1:53 y [::1]:53, donde nadie escucha, y TODA la red muere
+	// («lookup … on [::1]:53: connection refused»). Con CGO_ENABLED=0, que es
+	// como se compila en Termux por el tema faccessat2/SIGSYS, eso es siempre.
+	// Esto debe ir ANTES del primer uso de red (WhatsApp viene más abajo).
+	if servidores := red.ArreglarDNSAndroid(); len(servidores) > 0 {
+		log.Info("◑ DNS Android: resolución directa vía " + strings.Join(servidores, " · "))
+	}
 
 	// Log a archivo con rotación (4 MB × 3 backups): un bot que vive semanas
 	// en Termux no puede fiarlo todo a la consola. LOG_FILE=off lo desactiva.

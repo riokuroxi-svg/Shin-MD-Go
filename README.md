@@ -323,6 +323,18 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.7** — Termux: **DNS que funciona de verdad, en dos niveles**.
+  El parche del toolchain (que lee `$PREFIX/etc/resolv.conf`) no muerde en
+  todas las builds de go1.27.x — visto en un teléfono real con el archivo
+  ya creado y el DNS yéndose a `[::1]:53` igual. (1) Runtime: el bot lleva
+  ahora su propio resolvedor —`red.ArreglarDNSAndroid` instala un
+  `net.DefaultResolver` puro-Go que toma los nameservers de
+  `$PREFIX/etc/resolv.conf` (editable por ti) o 8.8.8.8/1.1.1.1, solo cuando
+  `/etc/resolv.conf` no nombra ninguno; sin esto el bot arrancaba pero jamás
+  hablaba con WhatsApp. (2) Build: si el `make build` muere bajando módulos,
+  el instalador reintenta solo con `GODEBUG=netdns=cgo` (bionic/netd) y luego
+  con `proot -b …resolv.conf:/etc/resolv.conf`. Investigación multilingüe
+  (EN/RU/ZH) detrás: termux/termux-packages#29042 y yetone/magpie#2872.
 - **0.17.6** — Termux: el instalador crea `$PREFIX/etc/resolv.conf` (si no
   existe) con 8.8.8.8/1.1.1.1. Motivo: el resolvedor puro de Go —el del
   toolchain y, con `CGO_ENABLED=0`, también el del bot— no lee las
