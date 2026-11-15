@@ -40,6 +40,39 @@ func (c *Client) SendAudioVoz(ctx context.Context, chat types.JID, mp3 []byte, p
 	})
 }
 
+// SendAudioPista manda audio como *canción* (no nota de voz): con su ficha de
+// título/artista, su duración (sin ella el móvil enseña un cromo de 0 s) y un
+// enlace de atribución. La usa `.play`: una pista que dice su origen no se
+// finge de donde no vino.
+func (c *Client) SendAudioPista(ctx context.Context, chat types.JID, mp3 []byte, titulo string, segundos int, origen string, priority bool) error {
+	if len(mp3) == 0 {
+		return errVacio
+	}
+	up, err := c.WA.Upload(ctx, mp3, whatsmeow.MediaAudio)
+	if err != nil {
+		return err
+	}
+	msg := &waE2E.Message{AudioMessage: &waE2E.AudioMessage{
+		URL:           proto.String(up.URL),
+		DirectPath:    proto.String(up.DirectPath),
+		MediaKey:      up.MediaKey,
+		FileEncSHA256: up.FileEncSHA256,
+		FileSHA256:    up.FileSHA256,
+		FileLength:    proto.Uint64(up.FileLength),
+		Mimetype:      proto.String("audio/mpeg"),
+	}}
+	if segundos > 0 {
+		msg.AudioMessage.Seconds = proto.Uint32(uint32(segundos))
+	}
+	// El origen de la atribución no tiene campo en AudioMessage (whatsapp no
+	// lo enseña en un audio); el comando la ya lo dice en el texto de la ficha.
+	_ = origen
+	return c.Queue.Do(ctx, len(titulo), priority, func() error {
+		_, err := c.WA.SendMessage(ctx, chat, msg)
+		return err
+	})
+}
+
 // SendVideoRedondo manda un MP4 como vídeo instantáneo (el círculo). En el
 // protocolo no es un flag del vídeo: es el campo `ptvMessage` del mensaje, que
 // lleva dentro un VideoMessage normal — igual que hace Baileys

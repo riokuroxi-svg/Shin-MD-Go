@@ -37,6 +37,20 @@ const (
 	FuenteArchivo = "archive"
 )
 
+// urlDeezer / urlITunes: como var para que las pruebas las apunten a
+// httptest igual que se hace en internal/apis (ver apis_test.go).
+var urlDeezer = "https://api.deezer.com"
+var urlITunes = "https://itunes.apple.com"
+
+// SwapURLs mueve Deezer e iTunes a otro host (solo en pruebas) y devuelve los
+// previos para ResetURLs. ResetURLs los restaura. Mismo patrón que apis.
+func SwapURLs(dz, it string) (prevDz, prevIt string) {
+	prevDz, prevIt = urlDeezer, urlITunes
+	urlDeezer, urlITunes = dz, it
+	return
+}
+func ResetURLs(dz, it string) { urlDeezer, urlITunes = dz, it }
+
 // MaxAudio es el tope duro de una descarga. Un tema de 4 minutos en MP3 ronda
 // los 4 MB; 24 MB deja sitio a directos y sesiones largas sin permitir que un
 // enlace raro llene el disco de un teléfono.
@@ -232,7 +246,7 @@ func (c *Cliente) BuscarDeezer(ctx context.Context, consulta string, limite int)
 	if limite <= 0 || limite > 25 {
 		limite = 5
 	}
-	u := "https://api.deezer.com/search?q=" + url.QueryEscape(consulta) +
+	u := urlDeezer + "/search?q=" + url.QueryEscape(consulta) +
 		"&limit=" + strconv.Itoa(limite)
 
 	cuerpo, err := c.get(ctx, u)
@@ -282,7 +296,7 @@ func (c *Cliente) BuscarITunes(ctx context.Context, consulta string, limite int)
 	if limite <= 0 || limite > 50 {
 		limite = 5
 	}
-	u := "https://itunes.apple.com/search?term=" + url.QueryEscape(consulta) +
+	u := urlITunes + "/search?term=" + url.QueryEscape(consulta) +
 		"&media=music&entity=song&limit=" + strconv.Itoa(limite)
 
 	cuerpo, err := c.get(ctx, u)
@@ -321,8 +335,9 @@ func (c *Cliente) BuscarITunes(ctx context.Context, consulta string, limite int)
 // Una fuente caída no invalida las demás: es la diferencia entre "no hay
 // resultados" y "hay resultados parciales y una fuente con problemas".
 type Busqueda struct {
-	Pistas []Pista
-	Fallos map[string]string
+	Pistas   []Pista
+	Fallos   map[string]string
+	Consulta string // la frase tal cual la pidió el usuario, para contestar
 }
 
 // Buscar consulta las tres fuentes en paralelo y mezcla por relevancia simple:
@@ -331,7 +346,7 @@ func (c *Cliente) Buscar(ctx context.Context, consulta string, porFuente int) Bu
 	var (
 		mu  sync.Mutex
 		wg  sync.WaitGroup
-		res = Busqueda{Fallos: map[string]string{}}
+		res = Busqueda{Fallos: map[string]string{}, Consulta: consulta}
 	)
 	agregar := func(fuente string, pistas []Pista, err error) {
 		mu.Lock()

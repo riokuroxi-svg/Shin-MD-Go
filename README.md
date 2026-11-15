@@ -57,7 +57,8 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B5.1 · Utilidades (1/2)** | `.qr` `.morse` `.demorse` `.recordar` `.olvidar` `.say` `.encuesta` `.pfp` `.wastalk` `.readviewonce` `.get`, encuestas y quiz nativos, recordatorios que sobreviven al reinicio | ✅ **hecho** ([docs/UTILIDADES.md](docs/UTILIDADES.md)) |
 | **B7.0 · Operación y estado** | `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart` `.update` `.subir` `.cache` `.shell` `.setmenu` | ✅ **hecho** ([docs/OPERACION.md](docs/OPERACION.md)) |
 | **B5.2 · Utilidades (2/2)** | `.traducir` (2 proveedores + detector propio) `.tts` `.acortar` `.tourl` `.crypto` `.letra` `.gitclone` `.githubstalk` `.ai` (con `GEMINI_KEY`) y `.hd` + `.carbon` **locales** (sin subir nada a webs ajenas); `.benchdl` queda para B6 | ✅ **hecho** ([docs/UTILIDADES2.md](docs/UTILIDADES2.md)) |
-| B6 · Descargas | play/yt/tiktok/ig/fb/x (decidir: Go puro o microservicio Node) | ⬜ |
+| **B6.0 · Música (escucha y descarga)** | `.play` (catálogos libres: Audius/Deezer/iTunes en paralelo, lista numerada, semáforo por chat) · `.escucha` (preview oficial) — *decisión: solo donde se permite descargar, no se piratea YouTube* | ✅ **hecho** ([docs/MUSICA.md](docs/MUSICA.md)) |
+| B6.1 · Descargas sociales | yt/tiktok/ig/fb/x (vídeo corto) — *pendiente* | ⬜ |
 | **B7 · Panel web** | `/health` `/queue` `/memoria` `/metrics` con failsafe loopback + Basic auth con candado, **rotación de logs** (4 MB × 3), unidad `systemd` | ✅ **hecho** ([docs/PANEL.md](docs/PANEL.md)) |
 | B8 · Paridad de pruebas | portar las 161 pruebas del JS y sumar las nuevas | ⬜ |
 
@@ -307,6 +308,12 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.15.0** — bloque B6.0: **música con licencia**. `.play` busca en
+  Audius (audio completo libre), Deezer e iTunes (previews) a la vez y
+  ordena: descargable delante; `.escucha` da el fragmento oficial de 30 s.
+  Se quitó el patio de yt-dlp del JS: aquí solo se baja de donde se puede,
+  con tope de 24 MB, solo-audio y un semáforo de 2 bajadas por chat. Detalle
+  en **[docs/MUSICA.md](docs/MUSICA.md)**.
 - **0.14.0** — bloque B7: **panel web y operación real**. `/health` `/queue`
   `/memoria` `/metrics` por HTTP en loopback (express → `net/http` pelado),
   con el failsafe del JS (LOOPBACK=0 sin clave vuelve a 127.0.0.1), Basic

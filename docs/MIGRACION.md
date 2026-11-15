@@ -261,7 +261,11 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   tourl, hd, carbon, crypto, letra, toimg, gitclone, githubstalk, ptv, benchdl
   y `.ai`. Se hace **después** de comprobar que cada API sigue viva.
 - **B6 · Descargas**
-  aquí decides A o B (ver §5). `play`, `yt`, `tiktok`, `ig`, `fb`, `x`.
+  **B6.0 · música (✓ 0.15.0)**: `.play` busca en Audius + Deezer + iTunes y
+  baja el audio completo **solo donde se permite** (nada de yt-dlp); el
+  motor `internal/musica` aplica 24 MB, solo-audio y 15 s de timeout.
+  **B6.1 · vídeos sociales (pendiente)**: `yt`, `tiktok`, `ig`, `fb`, `x` —
+  aquí decides A o B (ver §5).
 - **B7 · Panel web + operación**
   `/health`, `/queue`, `/memoria` con Basic auth, rotación de logs, unidad
   `systemd` (`Restart=always`, `MemoryMax=512M`) o script de Termux.
