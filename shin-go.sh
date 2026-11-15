@@ -210,8 +210,23 @@ asegurar_go() {
 
 asegurar_ytdlp() {
   [ "$CON_YTDLP" = 1 ] || return 0
-  paso "yt-dlp (opcional, para .yt/.tiktok — binario standalone, sin Python)"
+  paso "yt-dlp (opcional, para .yt/.tiktok)"
   if hay yt-dlp; then bien "yt-dlp ya estaba"; return 0; fi
+  # Termux: el binario standalone de GitHub es glibc y NO corre bajo bionic
+  # (Android); el paquete nativo del repo de Termux es la vía correcta aquí.
+  if [ "$TERMUX" = 1 ]; then
+    if [ -z "$DRY_RUN" ]; then
+      if pkg install -y yt-dlp >/dev/null 2>&1 && hay yt-dlp; then
+        bien "yt-dlp (paquete Termux)"
+      else
+        aviso "pkg no pudo instalar yt-dlp; .yt/.tiktok dirán que falta y cómo ponerlo"
+      fi
+    else
+      dato "(dry-run) pkg install -y yt-dlp"
+    fi
+    return 0
+  fi
+  dato "binario standalone, sin Python"
   if [ -z "$DRY_RUN" ]; then
     mkdir -p "$HOME/.local/bin"
     if descargar "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" "$HOME/.local/bin/yt-dlp"; then

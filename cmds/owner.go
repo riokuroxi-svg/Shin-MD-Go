@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"shin-go/internal/bot"
+	"shin-go/internal/utilidades"
 )
 
 func init() {
@@ -148,9 +149,13 @@ func registerUpdate() {
 
 			ctx, cancel := context.WithTimeout(c.Ctx, 60*time.Second)
 			defer cancel()
+			gitBin, errGit := utilidades.BuscarBin("git") // LookPath no (SIGSYS en varios Android)
+			if errGit != nil {
+				return c.Reply("「✧」 No encuentro `git` en el PATH; sin él no puedo actualizarme solo.")
+			}
 			// --ff-only: si hay cambios locales, git se niega en vez de
 			// mezclar cosas a medias. Un bot a medio mezclar no arranca.
-			salida, err := exec.CommandContext(ctx, "git", "-C", raiz, "pull", "--ff-only").CombinedOutput()
+			salida, err := exec.CommandContext(ctx, gitBin, "-C", raiz, "pull", "--ff-only").CombinedOutput()
 			texto := bot.ClipText(strings.TrimSpace(string(salida)), 1200)
 
 			if err != nil {
@@ -311,9 +316,13 @@ func registerShell() {
 				return c.Reply("《✧》 Debes escribir un comando a ejecutar.")
 			}
 
+			shBin, errSh := utilidades.BuscarBin("sh") // absoluta: ni LookPath ni "/bin/sh" a ciegas
+			if errSh != nil {
+				return c.Reply("《✧》 No encuentro `sh` en el PATH de este aparato.")
+			}
 			ctx, cancel := context.WithTimeout(c.Ctx, 20*time.Second)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, "sh", "-c", orden)
+			cmd := exec.CommandContext(ctx, shBin, "-c", orden)
 			salida, err := cmd.CombinedOutput()
 
 			texto := strings.TrimSpace(string(salida))

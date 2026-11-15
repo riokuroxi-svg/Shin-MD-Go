@@ -20,6 +20,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"shin-go/internal/utilidades"
 )
 
 // ErrSinFFmpeg: el sistema no tiene `ffmpeg` (ni `ffprobe`).
@@ -30,11 +32,11 @@ var ErrSinFFmpeg = errors.New("ffmpeg no está instalado")
 const esperaFFmpeg = 60 * time.Second
 
 // HayFFmpeg dice si el sistema tiene ffmpeg. Se comprueba en cada llamada:
-// `LookPath` recorre el PATH y cuesta microsegundos, y así no hay que reiniciar
-// el bot si el administrador acaba de instalarlo.
+// BuscarBin recorre el PATH y cuesta microsegundos, y así no hay que reiniciar
+// el bot si el administrador acaba de instalarlo. (LookPath quedó vetado: en
+// linux/arm64 baja a faccessat2 y varios kernels de Android responden SIGSYS.)
 func HayFFmpeg() bool {
-	_, err := exec.LookPath("ffmpeg")
-	return err == nil
+	return utilidades.HayBin("ffmpeg")
 }
 
 // VideoAWebP convierte los primeros `segundos` de un vídeo en un sticker
@@ -106,7 +108,11 @@ func ejecutar(ctx context.Context, args []string, entrada []byte) ([]byte, error
 	ctx, cancelar := context.WithTimeout(ctx, esperaFFmpeg)
 	defer cancelar()
 
-	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+	bin, err := utilidades.BuscarBin("ffmpeg")
+	if err != nil {
+		return nil, ErrSinFFmpeg
+	}
+	cmd := exec.CommandContext(ctx, bin, args...) // ruta absoluta: sin LookPath interno
 	cmd.Stdin = bytes.NewReader(entrada)
 	var salida, errores bytes.Buffer
 	cmd.Stdout = &salida

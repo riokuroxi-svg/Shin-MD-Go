@@ -14,6 +14,7 @@ import (
 
 	"shin-go/internal/bot"
 	"shin-go/internal/media"
+	"shin-go/internal/utilidades"
 	"shin-go/internal/wa"
 )
 
@@ -41,12 +42,13 @@ func cmdExec(c *bot.Context) error {
 	ctx, cancel := context.WithTimeout(c.Ctx, 30*time.Second)
 	defer cancel()
 
-	shell := "/bin/sh"
-	flag := "-c"
-	if runtimeHasBash() {
-		shell = "/bin/bash"
+	shell := shellDisponible()
+	if shell == "" {
+		return c.Reply("《✧》 No encuentro ni `sh` ni `bash` en el PATH de este aparato.")
 	}
-	cmd := exec.CommandContext(ctx, shell, flag, orden)
+	// Sin auto-prueba previa: la llamada real de abajo es la prueba; una
+	// ejecución extra en cada .ex solo inflaría la espera.
+	cmd := exec.CommandContext(ctx, shell, "-c", orden)
 	cmd.Cancel = func() error { return cmd.Process.Kill() }
 	salida, err := cmd.CombinedOutput()
 
@@ -66,9 +68,15 @@ func cmdExec(c *bot.Context) error {
 	return c.Reply("```sh\n$ " + orden + "\n\n" + cabe + "\n```")
 }
 
-func runtimeHasBash() bool {
-	_, err := exec.LookPath("bash")
-	return err == nil
+// shellDisponible prefiere bash y si no, sh; devuelve la ruta ABSOLUTA o "".
+// Nada de "/bin/sh" a ciegas (en Termux /bin/sh no existe) y nada de
+// exec.LookPath (en varios Android muere por SIGSYS): todo por BuscarBin.
+func shellDisponible() string {
+	if p, err := utilidades.BuscarBin("bash"); err == nil {
+		return p
+	}
+	p, _ := utilidades.BuscarBin("sh")
+	return p
 }
 
 // cmdAudioFx: el JS pasaba la nota por ffmpeg con un filtro; aquí igual, con

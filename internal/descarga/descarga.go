@@ -36,6 +36,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"shin-go/internal/utilidades"
 )
 
 // MaxVideo es el tope del JS para vídeo (100 MB por mensaje de WhatsApp).
@@ -71,7 +73,8 @@ type Resultado struct {
 // Devuelve el archivo listo o un error que ya viene traducido si era uno de
 // los motivos conocidos (bot-check, privado, no soportado).
 func Bajar(ctx context.Context, urlVideo, dir string, formato string) (*Resultado, error) {
-	if _, err := exec.LookPath(Ytdlp); err != nil {
+	bin, err := utilidades.BuscarBin(Ytdlp) // LookPath no: faccessat2 → SIGSYS en varios Android (ver utilidades/buscarbin.go)
+	if err != nil {
 		return nil, ErrNoYtdlp
 	}
 	ctx, cancel := context.WithTimeout(ctx, Plazo)
@@ -101,7 +104,7 @@ func Bajar(ctx context.Context, urlVideo, dir string, formato string) (*Resultad
 	// hijo cierra los pipes pero se niega a morir (sleep en el test sin esto
 	// de secuestraba la prueba un minuto entero: la salida la guarda Go, no el
 	// hijo, así que el pipe no se cierra hasta que muere él).
-	cmd := exec.CommandContext(ctx, Ytdlp, args...)
+	cmd := exec.CommandContext(ctx, bin, args...) // bin es ruta absoluta: Go no repite la búsqueda
 	cmd.Dir = dir
 	cmd.Cancel = func() error { return cmd.Process.Kill() }
 	cmd.WaitDelay = 3 * time.Second

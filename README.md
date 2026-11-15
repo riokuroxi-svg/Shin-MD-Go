@@ -323,6 +323,18 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.5** — **Termux: SIGSYS por `faccessat2`, reparado en build y
+  runtime** (reporte desde un teléfono real). Varios kernels de Android
+  vetan esa syscall por seccomp y responden matando el proceso, sin error
+  capturable. (1) Build: al detectar Termux el Makefile compila con
+  `CGO_ENABLED=0 -buildvcs=false` — el módulo es Go puro; gcc y la estampa
+  VCS eran las dos búsquedas que explotaban. (2) Runtime: el bot ya no usa
+  `exec.LookPath` en ninguna parte — el nuevo `utilidades.BuscarBin` recorre
+  el PATH con `os.Stat` (syscall permitida) y todos los `exec.Command`
+  reciben ruta absoluta, que es cuando Go no repite la búsqueda por dentro;
+  sin esto `.yt`, `.sticker` o `.ex` habrían tumbado el proceso entero en
+  esos teléfonos. (3) Instalador: yt-dlp llega vía `pkg install yt-dlp` en
+  Termux (el standalone de GitHub es glibc y no corre bajo bionic).
 - **0.17.3** — instalador más listo en Termux: Go llega vía `pkg install
   golang` (el tar de go.dev es GOOS=linux y en Android tropieza con DNS y
   los certificados del sistema) y se comprueba `make` (`pkg/apt/apk` según

@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.17.3"
+var version = "0.17.5"
 
 func main() {
 	var (

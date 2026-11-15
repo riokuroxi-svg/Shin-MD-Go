@@ -2,9 +2,18 @@
 # Uso: make build · make termux · make test · make run
 
 BIN      := shin
-VERSION  := 0.17.3
+VERSION  := 0.17.5
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 GOFLAGS  := -trimpath
+
+# Termux (Android): varios kernels llevan un filtro seccomp que mata con
+# SIGSYS la syscall faccessat2, y cmd/go la dispara al buscar gcc/git en el
+# PATH durante el build. Este módulo es Go puro: CGO_ENABLED=0 elimina la
+# búsqueda de gcc y -buildvcs=false la de git, y el binario sale igual.
+ifneq ($(TERMUX_VERSION)$(filter /data/data/com.termux/%,$(PREFIX)),)
+export CGO_ENABLED=0
+GOFLAGS += -buildvcs=false
+endif
 
 .PHONY: build run test vet fmt termux windows clean
 
