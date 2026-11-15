@@ -30,6 +30,7 @@ import (
 	waLog "go.mau.fi/whatsmeow/util/log"
 
 	"shin-go/internal/config"
+	"shin-go/internal/consola"
 	"shin-go/internal/xlog"
 )
 
@@ -188,12 +189,25 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 	// whatsmeow NO conecta él solo para emparejar («websocket not connected»):
 	// primero entra el socket, y con número ya puesto el QR ni se genera;
 	// luego se pide el código. El cliente queda ya conectado al volver.
+	sp := consola.Spinner(os.Stdout, "conectando con WhatsApp…")
 	if err := c.WA.Connect(); err != nil {
+		if sp != nil {
+			sp.Fail("no hubo conexión")
+		}
 		return fmt.Errorf("conectar para vincular: %w", err)
+	}
+	if sp != nil {
+		sp.UpdateText("pidiendo tu código…")
 	}
 	code, err := c.WA.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Shin-MD (Go)")
 	if err != nil {
+		if sp != nil {
+			sp.Fail("no llegó el código")
+		}
 		return fmt.Errorf("pedir código de emparejamiento: %w", err)
+	}
+	if sp != nil {
+		sp.Success("código listo")
 	}
 	PanelCodigo(os.Stdout, phone, code)
 	c.Log.Info("Código pedido: esperando a que lo teclees en el teléfono…")

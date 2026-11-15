@@ -20,8 +20,10 @@ import (
 	"go.mau.fi/whatsmeow/types/events"
 	"shin-go/cmds" // sus init() registran los comandos
 
+	"github.com/pterm/pterm"
 	"shin-go/internal/bot"
 	"shin-go/internal/config"
+
 	"shin-go/internal/consola"
 	"shin-go/internal/red"
 	"shin-go/internal/store"
@@ -30,7 +32,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.19.0"
+var version = "0.20.0"
 
 func main() {
 	var (
@@ -210,13 +212,26 @@ func main() {
 		bot.HandleGroupInfo(ctx, db, log, evt)
 	})
 
+	// Con sesión ya guardada el Login solo conecta: es el arranque de todos
+	// los días y merece su spinner. Sin sesión, Client.Login lleva el suyo
+	// por dentro (conectar → pedir código) y éste no se enseña.
+	sp := (*pterm.SpinnerPrinter)(nil)
+	if client.LoggedIn() {
+		sp = consola.Spinner(os.Stdout, "conectando con WhatsApp…")
+	}
 	if err := client.Login(ctx, numero); err != nil {
+		if sp != nil {
+			sp.Fail("no hubo conexión")
+		}
 		if ctx.Err() != nil { // Ctrl+C mientras se esperaba el QR
 			log.Info("vinculación cancelada")
 			return
 		}
 		log.Err("login: " + err.Error())
 		os.Exit(1)
+	}
+	if sp != nil {
+		sp.Success("conectado")
 	}
 	if ctx.Err() != nil {
 		return

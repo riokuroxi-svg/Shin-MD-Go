@@ -81,7 +81,7 @@ func TestPanelesNoRompiyContienenLoImportante(t *testing.T) {
 	b.Reset()
 	PanelCodigo(&b, "5215544443333", "XBBM4PBT")
 	s := b.String()
-	for _, trozo := range []string{"tu código", "X B B M - 4 P B T", "5215544443333", "Vincular un dispositivo › con número"} {
+	for _, trozo := range []string{"tu código", "XBBM-4PBT", "5215544443333", "Vincular un dispositivo › con número"} {
 		if !strings.Contains(s, trozo) {
 			t.Fatalf("el panel del código debe contener %q\n%s", trozo, s)
 		}

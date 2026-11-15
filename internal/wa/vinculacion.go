@@ -24,6 +24,8 @@ import (
 	"runtime"
 	"strings"
 
+	"shin-go/internal/consola"
+
 	"golang.org/x/term"
 )
 
@@ -137,36 +139,9 @@ func PreguntarNumero(salida io.Writer) string {
 }
 
 // ─── dibujo ──────────────────────────────────────────────────────────────
-
-const ancho = 58 // columnas totales del panel, como en el JS
-
-// caja: ╭ título ─…╮ / │ línea │ / ╰─…╯. Las líneas ya vienen con su texto;
-// se paddean al interior. Sin colores: esto se lee también en logs.
-func caja(w io.Writer, titulo string, lineas []string) {
-	relleno := ancho - 4 - len([]rune(titulo)) // "╭ " + título + " " + dashes + "╮"
-	if relleno < 0 {
-		relleno = 0
-	}
-	fmt.Fprintf(w, "╭ %s %s╮\n", titulo, strings.Repeat("─", relleno))
-	for _, l := range lineas {
-		n := len([]rune(l))
-		if n > ancho-4 {
-			n = ancho - 4 // una línea larga jamás rompe el borde; se recorta el relleno
-		}
-		fmt.Fprintf(w, "│ %s%s │\n", l, strings.Repeat(" ", ancho-4-n))
-	}
-	fmt.Fprintln(w, "╰"+strings.Repeat("─", ancho-2)+"╯")
-}
-
-// centrar dentro del interior (ancho-4 columnas útiles entre «│ » y « │»).
-func centrar(s string) string {
-	n := len([]rune(s))
-	if n >= ancho-4 {
-		return s
-	}
-	izq := (ancho - 4 - n) / 2
-	return strings.Repeat(" ", izq) + s
-}
+// Los paneles los dibuja internal/consola (pterm): caja con título, borde
+// sakura y texto envuelto al ancho real de la terminal — en un móvil en
+// vertical la caja nunca desborda la pantalla.
 
 // Espaciar: mete un espacio fino entre los caracteres del código para que
 // se lea sin confundir 8 con B. No cambia lo que hay que teclear.
@@ -186,16 +161,16 @@ func FormatearCodigo(codigo string) string {
 
 // PanelVinculacion: el aviso de que va a preguntar el número.
 func PanelVinculacion(w io.Writer) {
-	caja(w, "vinculación", []string{
+	consola.Caja(w, "v · vinculación",
+		consola.Papel("Vamos a vincular tu WhatsApp con el bot."),
 		"",
-		"Vamos a vincular tu WhatsApp con el bot.",
-		"No hay que escanear nada: WhatsApp te da un",
-		"código de 8 letras y lo escribes en el teléfono.",
+		consola.Tenue("No hay que escanear nada: WhatsApp te da"),
+		consola.Tenue("un código de 8 letras y lo escribes ahí."),
 		"",
-		"Ajustes › Dispositivos vinculados ›",
-		"Vincular un dispositivo › Vincular con número",
-		"",
-	})
+		consola.Papel("Ajustes › Dispositivos vinculados"),
+		consola.Papel("› Vincular un dispositivo"),
+		consola.Papel("› Vincular con número"),
+	)
 }
 
 // PanelCodigo: el momento importante de todo el arranque. Se dibuja grande,
@@ -203,21 +178,19 @@ func PanelVinculacion(w io.Writer) {
 func PanelCodigo(w io.Writer, numero, codigo string) {
 	codigo = FormatearCodigo(codigo)
 	fmt.Fprintln(w)
-	caja(w, "tu código", []string{
+	fmt.Fprint(w, consola.Grande(codigo)) // las 8 letras grandes: ES el bot
+	consola.Caja(w, "tu código",
+		consola.Papel("Escríbelo en el teléfono, así tal cual."),
 		"",
-		centrar("escríbelo en el teléfono"),
-		"",
-		centrar(Espaciar(codigo)),
-		"",
-		centrar("caduca en ~60 s · si expira, vuelve a arrancar"),
-		"",
-	})
+		consola.Tenue("Caduca en ~60 s. Si expira,"),
+		consola.Tenue("vuelve a arrancar el bot."),
+	)
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  cuenta: %s\n", numero)
-	fmt.Fprintln(w, "  1. abre WhatsApp en ese teléfono")
-	fmt.Fprintln(w, "  2. Ajustes › Dispositivos vinculados")
-	fmt.Fprintln(w, "  3. Vincular un dispositivo › con número")
-	fmt.Fprintln(w, "  4. teclea el código de arriba")
+	fmt.Fprintf(w, "  %s %s\n", consola.Tenue("cuenta:"), consola.Papel(numero))
+	fmt.Fprintln(w, "  "+consola.Tenue("1.")+" abre WhatsApp en ese teléfono")
+	fmt.Fprintln(w, "  "+consola.Tenue("2.")+" Ajustes › Dispositivos vinculados")
+	fmt.Fprintln(w, "  "+consola.Tenue("3.")+" Vincular un dispositivo › con número")
+	fmt.Fprintln(w, "  "+consola.Tenue("4.")+" teclea el código de arriba")
 	fmt.Fprintln(w)
 }
 

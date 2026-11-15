@@ -6,7 +6,6 @@ package xlog
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -57,15 +56,25 @@ type handlerConsola struct {
 func (h handlerConsola) Enabled(_ context.Context, l slog.Level) bool { return l >= h.min }
 
 func (h handlerConsola) Handle(_ context.Context, r slog.Record) error {
-	hora := consola.Tenue(r.Time.Format("15:04:05"))
+	hora := r.Time.Format("15:04:05")
 	msg := r.Message
+	tag := "INFO"
 	switch {
-	case strings.HasPrefix(msg, "✓"):
-		msg = consola.Menta(msg)
-	case strings.HasPrefix(msg, "⚠"):
-		msg = consola.Ambar(msg)
-	case strings.HasPrefix(msg, "✕"):
+	case r.Level >= slog.LevelError, strings.HasPrefix(msg, "✕"):
+		tag = "ERROR"
+		msg = strings.TrimPrefix(msg, "✕ ")
 		msg = consola.Rojo(msg)
+	case r.Level >= slog.LevelWarn, strings.HasPrefix(msg, "⚠"):
+		tag = "AVISO"
+		msg = strings.TrimPrefix(msg, "⚠ ")
+		msg = consola.Ambar(msg)
+	case strings.HasPrefix(msg, "✓"):
+		tag = "OK"
+		msg = strings.TrimPrefix(msg, "✓ ")
+		msg = consola.Menta(msg)
+	case r.Level <= slog.LevelDebug:
+		tag = "DEBUG"
+		msg = consola.Tenue(msg)
 	}
 	// Lo poco que lleve atributos (un Ctx) va compacto al final, no en
 	// columna: en pantalla manda leerlo, no alinearlo.
@@ -73,8 +82,8 @@ func (h handlerConsola) Handle(_ context.Context, r slog.Record) error {
 		msg += " " + consola.Tenue(a.Key+"="+a.Value.String())
 		return true
 	})
-	_, err := fmt.Fprintf(h.w, "%s  %s\n", hora, msg)
-	return err
+	consola.Prefijo(h.w, hora, tag, msg)
+	return nil
 }
 
 func (h handlerConsola) WithAttrs(_ []slog.Attr) slog.Handler { return h }

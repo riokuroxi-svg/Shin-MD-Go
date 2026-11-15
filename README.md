@@ -330,6 +330,17 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.20.0** — **la cara, bien (pterm)**: la estética deja de ser ANSI a
+  mano y pasa a [pterm](https://pterm.sh), la librería de consola bonita
+  por excelencia. Banner `SHIN-MD` en letras grandes (BigText) con
+  degradado sakura→magenta solo en terminal con color; los logs ya son
+  tags de herramienta (`INFO` magenta · `OK` verde · `AVISO` ámbar ·
+  `ERROR` rojo) con la hora en gris; las cajas de vinculación, tu código y
+  el panel de arranque se dibujan con `DefaultBox` y **envuelven el texto
+  al ancho real de la terminal**: en un móvil en vertical ya nada se sale
+  de la pantalla, sea cual sea su columna. El spinner «conectando with
+  WhatsApp…» gira mientras se enlaza. En Windows sin color y en pipes, todo
+  degrada solo a texto plano (NO_COLOR incluido).
 - **0.19.0** — **la cara**: el bot ahora se ve como el JS. Banner marca
   Shin (`S H I N — M D / 反魂`, versión · runtime · plataforma) en cuanto
   arranca; los logs de consola pasan de slog crudo a la forma

@@ -4,6 +4,8 @@ go 1.26.0
 
 require (
 	github.com/HugoSmits86/nativewebp v1.3.0
+	github.com/mattn/go-runewidth v0.0.24
+	github.com/pterm/pterm v0.12.84
 	go.mau.fi/whatsmeow v0.0.0-20261013142727-4cf8bc8e0aeb
 	golang.org/x/image v0.24.0
 	golang.org/x/term v0.46.0
@@ -13,12 +15,18 @@ require (
 )
 
 require (
+	atomicgo.dev/cursor v0.2.0 // indirect
+	atomicgo.dev/keyboard v0.2.10 // indirect
+	atomicgo.dev/schedule v0.1.0 // indirect
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/beeper/argo-go v1.1.2 // indirect
+	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/coder/websocket v1.8.15 // indirect
+	github.com/containerd/console v1.0.5 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/elliotchance/orderedmap/v3 v3.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/lithammer/fuzzysearch v1.1.8 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.1.0 // indirect
