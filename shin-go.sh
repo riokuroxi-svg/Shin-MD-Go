@@ -13,7 +13,8 @@
 #    2. Consigue las herramientas: git y el Go que pide el módulo (1.26.0).
 #       El árbol de Go se baja de go.dev y se comprueba su SHA-256 contra
 #       el .sha256 oficial antes de tocarlo. Sin root: va a ~/.local.
-#    3. Clona el repo (o lo actualiza si ya está) y compila con `make`.
+#    3. Clona el repo (o lo actualiza si ya está; jamás toca un clon cuyo
+#       origin sea otro repo — p. ej. uno de desarrollo) y compila con `make`.
 #    4. Deja el binario instalado, un .env listo para editar y —si puede—
 #       el servicio en marcha (systemd en Linux con root, script de arranque
 #       de Termux en Android, nohup en el resto).
@@ -215,6 +216,15 @@ obtener_codigo() {
   paso "Código: $REPO ($REF)"
   if [ -d "$DIR/.git" ]; then
     dato "ya existe; actualizo"
+    # Guardia: $DIR puede ser un clon DE DESARROLLO que casualmente se llame
+    # igual. Antes de un fetch+reset --hard (que pisa cambios locales)
+    # compruebo que su origin apunte a ESTE repo; si no, me detengo.
+    URL_ORIGEN=$(git -C "$DIR" remote get-url origin 2>/dev/null || echo "")
+    _n1=$(printf '%s' "$URL_ORIGEN" | sed 's|^[a-zA-Z]*://[^/]*/||; s|^[^@]*@[^:]*:||; s|\.git$||')
+    _n2=$(printf '%s' "$REPO" | sed 's|\.git$||')
+    if [ -z "$URL_ORIGEN" ] || [ "$_n1" != "$_n2" ]; then
+      morir "$DIR ya es un repo distinto (origin: ${URL_ORIGEN:-ninguno}). Por seguridad no lo toco: ejecuta con SHIN_GO_DIR=otra/ruta o borra esa carpeta."
+    fi
     if [ -z "$DRY_RUN" ]; then
       git -C "$DIR" fetch --depth 1 origin "$REF" || morir "git fetch falló"
       git -C "$DIR" reset --hard FETCH_HEAD || morir "git reset falló"
