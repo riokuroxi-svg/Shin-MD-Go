@@ -159,9 +159,16 @@ Requisitos: **Go 1.26 o superior**. Nada más — ni Node, ni Python, ni compila
 ### Arrancar
 
 ```bash
-./dist/shin                 # muestra el QR en la terminal
-./dist/shin --code 52155…   # vincular con código de 8 dígitos
+./dist/shin                 # la primera vez te PREGUNTA tu número y te da el código
+./dist/shin --code 52155…   # el número a mano, sin pregunta
+PAIRING_NUMBER=52155… ./dist/shin   # lo mismo, por entorno (servicios)
 ```
+
+La vinculación es siempre **por código de 8 letras** (Ajustes › Dispositivos
+vinculados › Vincular con número): el QR no existe — el bot corre en el
+propio móvil, donde nadie podría escanearlo. Sin sesión y sin terminal
+donde preguntar (un servicio, un tubo), no se arranca a ciegas: te dice la
+orden exacta y para.
 
 ### Variables de entorno
 
@@ -323,6 +330,22 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.18.0** — **el arranque del JS sabor calcado**. El instalador ya no te
+  deja un «ahora ejecuta shin»: ARRANCA el bot por `exec` (el bot pasa a ser
+  el proceso, Ctrl+C lo para, no hay padre zombie) y, si no hay sesión, el
+  propio binario se detiene y **te pregunta tu número de WhatsApp** —lee la
+  terminal real detrás aunque vengas de un `curl | sh`, igual que
+  `leerDeTerminal` del JS—, te dibuja el panel «vinculación» y, tras pedir el
+  código a WhatsApp, el panel «tu código» con el `XXXX-XXXX` en grande y los
+  cuatro pasos. La decisión es una función pura portada 1:1
+  (`PlanDeVinculacion`: nada/usar/preguntar/salir), con `NormalizarTelefono`
+  que aplica las reglas del JS (México `52…`→`521…`, Argentina `54…`→`549…`,
+  basura fuera). `--code` solo re-vincula; `PAIRING_NUMBER` para servicios;
+  y **el QR se retira de la consola**: en el móvil donde corre el bot nadie
+  podía escanearlo, era una trampa honesta. Sin terminal ni número no se
+  arranca a ciegas: dice la orden exacta y sale. El instalador acepta
+  `--no-arrancar` y `--code` en pasarela, como el del JS. Paquete
+  `qrterminal` fuera de go.mod.
 - **0.17.9** — Termux: **compilación en proot serializada contra el SIGSYS.
   Cuarta barrera, del *compilador* esta vez: con DNS y TLS ya resueltos,
   `go build` explotaba en `syscall.faccessat2 → os/exec.LookPath` (stack

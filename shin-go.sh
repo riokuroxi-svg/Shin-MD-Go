@@ -15,9 +15,17 @@
 #       el .sha256 oficial antes de tocarlo. Sin root: va a ~/.local.
 #    3. Clona el repo (o lo actualiza si ya está; jamás toca un clon cuyo
 #       origin sea otro repo — p. ej. uno de desarrollo) y compila con `make`.
+<<<<<<< HEAD
 #    4. Deja el binario instalado, un .env listo para editar y —si puede—
 #       el servicio en marcha (systemd en Linux con root, script de arranque
 #       de Termux en Android, nohup en el resto).
+=======
+#    4. Deja el binario instalado ($PREFIX/bin/shin en Termux), un .env
+#       listo para editar y ARRANCA el bot: pasa a ser este proceso (exec),
+#       como el instalador del Shin-MD JS. Si no hay sesión de WhatsApp, el
+#       propio bot se detiene a preguntarte tu número y te da el código de
+#       8 letras. Con systemd (VPS con root) el arranque queda en la unidad.
+>>>>>>> 6306afd (0.18.0 — arranque automático y vinculación por código, calcados del JS)
 #
 #  OPCIONAL: yt-dlp
 #    Los descargadores de vídeo sociales (.yt / .tiktok / .ig…) usan yt-dlp
@@ -28,22 +36,42 @@
 #    Quien escribe `curl … | sh` está pidiendo sh, y en Alpine o busybox sh
 #    no es bash. Nada aquí es bashismo: ni arrays, ni [[ ]]`, ni `local`.
 #
+#  ARGUMENTOS
+#    --no-arrancar           deja todo listo, sin arrancar el bot
+#    --code [NÚMERO]         se lo pasa al bot tal cual (vinculación)
+#
 #  VARIABLES
 #    SHIN_GO_DIR=RUTA        dónde vive el código (defecto ~/shin-md-go)
 #    SHIN_GO_REF=REF         rama o etiqueta de git (defecto main)
 #    SHIN_GO_REPO=u/repo     otro repositorio (forks)
 #    SHIN_GO_CON_YTDLP=0     no instalar yt-dlp
 #    SHIN_GO_SIN_SERVICIO=1  compilar e instalar sin arrancar nada
+#    SHIN_SIN_ARRANQUE=1     sinónimo (mismo nombre que el instalador JS)
 #    SHIN_GO_DRY_RUN=1       dice qué haría, sin ejecutar
 #    NO_COLOR=1              sin colores
 set -eu
+
+# ─────────────────────────── argumentos ───────────────────────────
+# Lo que no sea para el instalador se lo paso al BOT (--code…), igual que
+# el shin.sh del JS deriva todo al instalador y este al bot. POSIX no tiene
+# arrays: se acumula en una cadena y se expande sin comillas al hacer exec.
+BOT_ARGS=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --no-arrancar|--sin-arranque) SIN_SERVICIO_X=1 ;;
+    --code|--code=*) BOT_ARGS="${BOT_ARGS:+$BOT_ARGS }$1" ;;
+    *) printf '  ! argumento no reconocido: %s (se ignora)\n' "$1" >&2 ;;
+  esac
+  shift
+done
 
 readonly REF="${SHIN_GO_REF:-main}"
 REPO="${SHIN_GO_REPO:-riokuroxi-svg/Shin-MD-Go}"
 DIR="${SHIN_GO_DIR:-$HOME/shin-md-go}"
 GO_VERSION="1.26.0"
 CON_YTDLP="${SHIN_GO_CON_YTDLP:-1}"
-SIN_SERVICIO="${SHIN_GO_SIN_SERVICIO:-}"
+SIN_SERVICIO="${SIN_SERVICIO_X:-${SHIN_GO_SIN_SERVICIO:-}}"
+[ -n "${SHIN_SIN_ARRANQUE:-}" ] && SIN_SERVICIO=1
 DRY_RUN="${SHIN_GO_DRY_RUN:-}"
 
 # ─────────────────────────── salida ───────────────────────────
@@ -410,8 +438,11 @@ instalar() {
 }
 
 arrancar() {
-  [ -z "$SIN_SERVICIO" ] || { dato "arranque desactivado (SHIN_GO_SIN_SERVICIO=1)"; return 0; }
-  paso "Arranque"
+  [ -z "$SIN_SERVICIO" ] || { dato "arranque desactivado (--no-arrancar / SHIN_GO_SIN_SERVICIO=1)"; return 0; }
+
+  # Termux: además del arranque inmediato, el de al encender el teléfono
+  # (solo muerde si tienes la app Termux:Boot; sin ella, el archivo estorba
+  # a nadie).
   if [ "$TERMUX" = 1 ]; then
     if [ -z "$DRY_RUN" ]; then
       mkdir -p "$HOME/.termux/boot"
@@ -420,36 +451,74 @@ arrancar() {
 cd "$PREFIX/bin" && exec "$PREFIX/bin/shin" >> "\$HOME/shin.log" 2>&1
 ARRANQUE
       chmod +x "$HOME/.termux/boot/shin"
+<<<<<<< HEAD
       bien "arranque al encender el teléfono, si tienes la app Termux:Boot (~/.termux/boot/shin)"
       dato "para arrancarlo ahora:  shin        (o ./shin desde $PREFIX/bin)"
+=======
+      dato "arranque al encender el teléfono: ~/.termux/boot/shin (con la app Termux:Boot)"
+>>>>>>> 6306afd (0.18.0 — arranque automático y vinculación por código, calcados del JS)
     else
       dato "(dry-run) script de arranque de Termux"
     fi
+  fi
+
+  # VPS con root y systemd: ahí el arranque lo lleva la unidad, en segundo
+  # plano. La vinculación se hace leyendo el código en el journal, o a mano.
+  if [ "$ROOT" = 1 ] && [ "$TERMUX" != 1 ] && hay systemctl && [ -d /run/systemd/system ]; then
+    paso "Servicio"
+    if [ -n "$DRY_RUN" ]; then dato "(dry-run) unidad systemd desde deploy/shin.service"; return 0; fi
+    if [ -f "$DIR/deploy/shin.service" ]; then
+      sed "s|/opt/shin|$DESTINO|g" "$DIR/deploy/shin.service" > /etc/systemd/system/shin.service
+      systemctl daemon-reload
+      systemctl enable --now shin >/dev/null 2>&1 || aviso "systemd lo registró pero no arrancó; mira: journalctl -u shin"
+      bien "servicio systemd «shin» activo (reinicia solo si cae)"
+      dato "primera vez: vincula con   shin --code 521XXXXXXXXXX   y reinicia: systemctl restart shin"
+    else
+      aviso "no encontré deploy/shin.service; arranca a mano: shin --code 521XXXXXXXXXX"
+    fi
     return 0
   fi
-  if [ "$ROOT" = 1 ] && hay systemctl && [ -d /run/systemd/system ]; then
-    if [ -z "$DRY_RUN" ]; then
-      if [ -f "$DIR/deploy/shin.service" ]; then
-        sed "s|/opt/shin|$DESTINO|g" "$DIR/deploy/shin.service" > /etc/systemd/system/shin.service
-        systemctl daemon-reload
-        systemctl enable --now shin >/dev/null 2>&1 || aviso "systemd lo registró pero no arrancó; mira: journalctl -u shin"
-        bien "servicio systemd «shin» activo (reinicia solo si cae)"
-      else
-        aviso "no encontré deploy/shin.service; arranca a mano: $DESTINO/shin"
-      fi
-    else
-      dato "(dry-run) unidad systemd desde deploy/shin.service"
-    fi
-  else
-    dato "sin systemd ni root: arranca con  cd $DESTINO && ./shin"
-    dato "(el bot pide el QR en pantalla la primera vez)"
+
+  # Donde no hay systemd —Termux incluido— el bot arranca Y PASA A SER este
+  # proceso (exec), como hace el instalador del JS: Ctrl+C lo para, el
+  # código de salida es el del bot y no queda un instalador zombie detrás.
+  # Si no hay sesión de WhatsApp, el propio bot se detiene a preguntarte el
+  # número (lee la terminal de verdad, da igual que vengas de un «curl | sh»)
+  # o, si ni siquiera hay terminal, te dice la orden exacta y sale limpio.
+  paso "Arrancando Shin-MD-Go"
+  if [ -n "$DRY_RUN" ]; then dato "(dry-run) exec $DESTINO/shin $BOT_ARGS"; return 0; fi
+  if hay pgrep && pgrep -x shin >/dev/null 2>&1; then
+    aviso "ya hay un «shin» corriendo; no arranco otro."
+    dato "para reiniciarlo: Ctrl+C en su terminal y vuelve a escribir  shin"
+    return 0
   fi
+  cd "$DESTINO" || morir "no pude entrar en $DESTINO"
+  dato "deja esta terminal abierta · Ctrl+C para parar"
+  # $BOT_ARGS sin comillas a propósito: porta --code y compañía.
+  exec "$DESTINO/shin" $BOT_ARGS
 }
 
 # ─────────────────────────── main ───────────────────────────
 paso "Shin-MD-Go · instalación en un comando"
 dato "entorno: $ENTORNO · $ARQ"
 [ -n "$DRY_RUN" ] && aviso "DRY-RUN: cuento qué haría, no ejecuto nada"
+
+# El resumen va ANTES del arranque: cuando este último hace exec, nada de
+# lo escrito después se llegaría a ver jamás.
+resumen() {
+  if [ -n "$DRY_RUN" ]; then dato "dry-run terminado; nada se tocó"; return 0; fi
+  VER=$(sed -n 's/^VERSION  := //p' "$DIR/Makefile" 2>/dev/null || true)
+  paso "Listo"
+  printf '  %s✓%s Shin-MD-Go %s instalado en %s%s\n\n' "$VD" "$R" "${VER:-}" "$DESTINO" "$R"
+  dato "arrancar (la próxima vez, ya instalado):"
+  printf '      shin                        desde cualquier carpeta\n'
+  printf '      shin --code 521XXXXXXXXXX   vincular con número a mano\n\n'
+  dato "vincular WhatsApp: el bot pregunta tu número la primera vez y te da"
+  dato "un código de 8 letras (Ajustes › Dispositivos vinculados › con número)"
+  dato "parar: Ctrl+C en la terminal del bot"
+  dato "config: $DESTINO/.env · datos: $DESTINO/data/"
+  dato "actualizar: el mismo comando de siempre; .env y data/ jamás se tocan"
+}
 
 asegurar_git
 asegurar_make
@@ -459,13 +528,5 @@ asegurar_ytdlp
 obtener_codigo
 compilar
 instalar
-arrancar
-
-paso "Listo"
-if [ -n "$DRY_RUN" ]; then
-  dato "dry-run terminado; nada se tocó"
-else
-  printf '\n  %s✓%s Shin-MD-Go quedó instalado.%s\n' "$VD" "$R" "$R"
-  dato "primera vez: el bot muestra un QR en pantalla para vincular WhatsApp"
-  dato "config: $DESTINO/.env · datos: $DESTINO/data/"
-fi
+resumen
+arrancar   # puede terminar en exec: si «vuelve», es que el bot salió

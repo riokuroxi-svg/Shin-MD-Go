@@ -18,10 +18,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"github.com/mdp/qrterminal/v3"
 	"google.golang.org/protobuf/proto"
 
 	"go.mau.fi/whatsmeow"
@@ -174,47 +172,31 @@ func (c *Client) Close() {
 	}
 }
 
-// Login: si ya hay sesión, conecta; si se pasa teléfono usa código de 8
-// dígitos; si no, muestra el QR en la terminal.
+// Login: si ya hay sesión, conecta; sin sesión EXIGE el número y vincula
+// por código de 8 letras. El QR se retiró de la consola, como en el JS:
+// el bot corre en el propio móvil que llevaría la cuenta —no hay cámara
+// que lo escanee— y un QR dibujado en un log es una trampa honesta.
 func (c *Client) Login(ctx context.Context, phone string) error {
 	if c.LoggedIn() {
 		return c.WA.Connect()
 	}
 
-	if phone != "" {
-		phone = strings.TrimPrefix(strings.TrimSpace(phone), "+")
-		code, err := c.WA.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Shin-MD (Go)")
-		if err != nil {
-			return fmt.Errorf("pedir código de emparejamiento: %w", err)
-		}
-		c.Log.Info("Código de emparejamiento: " + code)
-		c.Log.Info("WhatsApp → Dispositivos vinculados → Vincular con número de teléfono")
-		return c.WA.Connect()
+	phone = NormalizarTelefono(phone)
+	if phone == "" {
+		return fmt.Errorf("sin sesión y sin número: la vinculación es por código (--code 521… o PAIRING_NUMBER=521…)")
 	}
-
-	qrChan, err := c.WA.GetQRChannel(ctx)
+	// whatsmeow NO conecta él solo para emparejar («websocket not connected»):
+	// primero entra el socket, y con número ya puesto el QR ni se genera;
+	// luego se pide el código. El cliente queda ya conectado al volver.
+	if err := c.WA.Connect(); err != nil {
+		return fmt.Errorf("conectar para vincular: %w", err)
+	}
+	code, err := c.WA.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Shin-MD (Go)")
 	if err != nil {
-		return err
+		return fmt.Errorf("pedir código de emparejamiento: %w", err)
 	}
-	if err = c.WA.Connect(); err != nil {
-		return err
-	}
-
-	for item := range qrChan {
-		switch item.Event {
-		case "code":
-			fmt.Println()
-			qrterminal.GenerateHalfBlock(item.Code, qrterminal.L, os.Stdout)
-			c.Log.Info("Escanea el QR: WhatsApp → Dispositivos vinculados")
-		case "success":
-			c.Log.Ok("Vinculado ✔")
-			return nil
-		case "timeout":
-			return fmt.Errorf("el QR caducó, vuelve a ejecutar")
-		default:
-			c.Log.Warn("QR: " + item.Event)
-		}
-	}
+	PanelCodigo(os.Stdout, phone, code)
+	c.Log.Info("Código pedido: esperando a que lo teclees en el teléfono…")
 	return nil
 }
 

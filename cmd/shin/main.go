@@ -30,14 +30,23 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.17.9"
+var version = "0.18.0"
 
 func main() {
 	var (
-		phone   = flag.String("code", "", "vincular con número (código de 8 dígitos)")
+		phone   = flag.String("code", "", "vincular con número (código de 8 letras; sin número, lo pregunta)")
 		showVer = flag.Bool("version", false, "mostrar versión")
 	)
-	flag.Parse()
+	// `--code` solo (sin número) = «vincula, aunque ya haya sesión»: el
+	// paquete flag exige valor, así que un --code pelado se normaliza a
+	// --code= antes de Parse; flag.Visit lo sigue contando como pasado.
+	args := os.Args[1:]
+	for i, a := range args {
+		if (a == "--code" || a == "-code") && (i == len(args)-1 || strings.HasPrefix(args[i+1], "-")) {
+			args[i] = a + "="
+		}
+	}
+	_ = flag.CommandLine.Parse(args)
 
 	if *showVer {
 		fmt.Println("Shin-MD (Go)", version)
@@ -103,6 +112,43 @@ func main() {
 	}
 	defer client.Close()
 
+	// ── Vinculación: la regla del JS, calcada ────────────────────────────
+	// Un número escrito a mano (--code <num> / PAIRING_NUMBER) manda siempre
+	// y no se pregunta dos veces. Con sesión registrada y nada forzado, no
+	// se pregunta nada. Con terminal detrás —aunque vengas de «curl | sh»—
+	// se pregunta el número. Sin terminal no se arranca a ciegas: se explica
+	// la orden exacta y se sale, porque seguir acababa en un QR que nadie
+	// pidió y que no se puede escanear desde el propio móvil.
+	codePasado := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "code" {
+			codePasado = true
+		}
+	})
+	numero := wa.NormalizarTelefono(*phone)
+	if numero == "" {
+		numero = wa.NormalizarTelefono(os.Getenv("PAIRING_NUMBER"))
+	}
+	plan := wa.PlanDeVinculacion(client.LoggedIn(), codePasado, numero, wa.HayTerminal(), "no hay sesión")
+	switch plan.Accion {
+	case wa.AccionNada:
+		log.Info("sesión existente: no hace falta vincular nada.")
+	case wa.AccionUsar:
+		numero = plan.Numero
+		log.Info("vinculando con el número " + plan.Numero + ".")
+	case wa.AccionPreguntar:
+		wa.PanelVinculacion(os.Stdout)
+		numero = wa.PreguntarNumero(os.Stdout)
+		if numero == "" {
+			log.Err("ese número no tiene dígitos usables.")
+			os.Exit(1)
+		}
+		log.Info("vinculando con el número " + numero + ".")
+	case wa.AccionSalir:
+		wa.ExplicarSinTerminal(os.Stderr, plan.Motivo)
+		os.Exit(1)
+	}
+
 	// El ancla del calentamiento (el día en que este número arrancó por primera
 	// vez) se guarda en SQLite: si viviera en memoria, cada reinicio volvería a
 	// 20 mensajes/día y el warm-up nunca llegaría a 500.
@@ -162,7 +208,7 @@ func main() {
 		bot.HandleGroupInfo(ctx, db, log, evt)
 	})
 
-	if err := client.Login(ctx, *phone); err != nil {
+	if err := client.Login(ctx, numero); err != nil {
 		if ctx.Err() != nil { // Ctrl+C mientras se esperaba el QR
 			log.Info("vinculación cancelada")
 			return

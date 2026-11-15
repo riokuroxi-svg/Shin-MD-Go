@@ -4,9 +4,9 @@ go 1.26.0
 
 require (
 	github.com/HugoSmits86/nativewebp v1.3.0
-	github.com/mdp/qrterminal/v3 v3.2.1
 	go.mau.fi/whatsmeow v0.0.0-20261013142727-4cf8bc8e0aeb
 	golang.org/x/image v0.24.0
+	golang.org/x/term v0.46.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0
 	rsc.io/qr v0.2.0
@@ -33,7 +33,6 @@ require (
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.50.0 // indirect
-	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.81.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
