@@ -272,9 +272,15 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
 - **B7 · Panel web + operación**
   `/health`, `/queue`, `/memoria` con Basic auth, rotación de logs, unidad
   `systemd` (`Restart=always`, `MemoryMax=512M`) o script de Termux.
-- **B8 · Paridad de pruebas**
-  portar las 161 pruebas → en Go deben quedar **más** porque la UI y la DB se
-  prueban sin red. Objetivo: 1 test por comando + los tests de motor actuales.
+- **B8 · Paridad (✓ 0.17.0)**
+  El catálogo quedó **sellado**: `TestParidadCatalogo` lee los 640 nombres
+  que el JS declara y exige que cada uno esté registrado en Go o
+  justificado en `docs/NO_PORTADO.md`. Cualquier intento de olvidarse de un
+  comando truena CI.
+  Nota del recuento: el JS no tenía 161 tests sino 126 archivos; en Go hay
+  ya 416 tests por función. Motor y comandos sin red se prueban con
+  httptest; lo que sí usa WhatsApp no emula la red de verdad (los tests de
+  la cola, el anti-ban y las listas lo cubren).
 
 Regla de oro igual que la tuya: **nada entra sin prueba que lo respalde**.
 

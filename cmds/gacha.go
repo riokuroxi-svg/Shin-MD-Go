@@ -304,7 +304,7 @@ func registerHarem() {
 func registerSetFav() {
 	bot.Register(bot.Command{
 		Name:     "setfav",
-		Aliases:  []string{"favorito", "setfavorito"},
+		Aliases:  []string{"favorito", "setfavorito", "setfavourite"},
 		Category: bot.CatGacha,
 		Desc:     "Marcar tu personaje favorito (no te lo pueden robar)",
 		Cooldown: 2,
@@ -420,7 +420,7 @@ func registerGachaToggle() {
 func registerGachaInfo() {
 	bot.Register(bot.Command{
 		Name:     "gachainfo",
-		Aliases:  []string{"ginfo", "personajes"},
+		Aliases:  []string{"ginfo", "personajes", "infogacha"},
 		Category: bot.CatGacha,
 		Desc:     "Cuántos personajes hay en el catálogo",
 		Cooldown: 3,

@@ -60,7 +60,7 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B6.0 · Música (escucha y descarga)** | `.play` (catálogos libres: Audius/Deezer/iTunes en paralelo, lista numerada, semáforo por chat) · `.escucha` (preview oficial) — *decisión: solo donde se permite descargar, no se piratea YouTube* | ✅ **hecho** ([docs/MUSICA.md](docs/MUSICA.md)) |
 | **B6.1 · Descargas sociales** | `.yt` `.ytmp3` `.tiktok` `.ig` `.fb` `.x` vía **yt-dlp cuando está instalado** (decisión auditada: YouTube 2026 exige PoToken; no se finge, se explica) — tope 100 MB, plazo 5 min | ✅ **hecho** |
 | **B7 · Panel web** | `/health` `/queue` `/memoria` `/metrics` con failsafe loopback + Basic auth con candado, **rotación de logs** (4 MB × 3), unidad `systemd` | ✅ **hecho** ([docs/PANEL.md](docs/PANEL.md)) |
-| B8 · Paridad de pruebas | portar las 161 pruebas del JS y sumar las nuevas | ⬜ |
+| **B8 · Paridad de catálogo y tests** | los 640 nombres del JS están en Go o justificados en [NO_PORTADO](docs/NO_PORTADO.md); `TestParidadCatalogo` lo blinda · 416 tests en 16 paquetes | ✅ **hecho** |
 
 Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
@@ -323,6 +323,15 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.17.0** — **100% del catálogo**: las ~140 reacciones anime (shares.js)
+  con waifu.pics y frases del JS; la economía del harem (.sell .buychar
+  .trade .robwaifu .giveallharem…); los paquetes de stickers en SQLite (en RAM
+  se perdían); el resto de perfil/grupos/fun/owner; `.adminonly .rpg .slut
+  .einfo .math`; buscadores (.imagen .mediafire .gdrive .apk .ytsearch); los
+  booru con candado `.nsfw on`; `.ex` del owner (30 s, 3400 runas);
+  efectos de audio por ffmpeg; y el **test de paridad**: los 640 nombres del
+  JS están en Go o justificados, y CI lo exige. Qué no entró y por qué:
+  **[docs/NO_PORTADO.md](docs/NO_PORTADO.md)**.
 - **0.16.0** — bloque B6.1 + operación: **`shin-go.sh`** (instalación en un
   comando estilo shin.sh, con toolchain Go verificado por SHA-256) y los
   sociales `.yt` `.ytmp3` `.tiktok` `.ig` `.fb` `.x` como capa honesta sobre

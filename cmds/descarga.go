@@ -23,7 +23,7 @@ import (
 
 func init() {
 	bot.Register(bot.Command{
-		Name: "yt", Aliases: []string{"ytv", "video"}, Category: bot.CatDownload,
+		Name: "yt", Aliases: []string{"ytv", "video", "ytdl", "ytdlp"}, Category: bot.CatDownload,
 		Desc: "Baja un vídeo social (YouTube, TikTok, Instagram…) vía yt-dlp si está instalado.",
 		Run:  func(c *bot.Context) error { return cmdDescarga(c, "video") },
 	})
@@ -33,7 +33,7 @@ func init() {
 		Run:  func(c *bot.Context) error { return cmdDescarga(c, "audio") },
 	})
 	for _, v := range []struct{ nombre, pista string }{
-		{"tiktok", "TikTok"}, {"ig", "Instagram"}, {"fb", "Facebook"}, {"x", "X/Twitter"},
+		{"tiktok", "TikTok"}, {"tt", "TikTok"}, {"ig", "Instagram"}, {"instagram", "Instagram"}, {"reel", "Instagram"}, {"fb", "Facebook"}, {"facebook", "Facebook"}, {"x", "X/Twitter"}, {"twitter", "X/Twitter"},
 	} {
 		n, p := v.nombre, v.pista
 		bot.Register(bot.Command{

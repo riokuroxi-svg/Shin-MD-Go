@@ -158,7 +158,7 @@ func init() {
 	// ── comando: .antilink ───────────────────────────────────────────────
 	bot.Register(bot.Command{
 		Name:      "antilink",
-		Aliases:   []string{"antienlaces", "nolinks"},
+		Aliases:   []string{"antienlaces", "nolinks", "antilinks"},
 		Category:  bot.CatGroup,
 		Desc:      "Activa o desactiva el borrado de enlaces (.antilink on/off)",
 		GroupOnly: true,

@@ -21,7 +21,7 @@ func init() {
 	// ── perfil set*/del* ──
 	for _, p := range []struct{ nombre, alias, campo, nombreCampo string }{
 		{"setdescription", "setdesc", store.CampoDescripcion, "descripción"},
-		{"setgenre", "setdesc2", store.CampoGenero, "género"},
+		{"setgenre", "", store.CampoGenero, "género"},
 		{"sethobby", "setpasatiempo", store.CampoPasatiempo, "pasatiempo"},
 		{"setbirth", "", store.CampoCumple, "cumpleaños"},
 	} {

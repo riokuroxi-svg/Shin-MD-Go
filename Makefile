@@ -2,7 +2,7 @@
 # Uso: make build · make termux · make test · make run
 
 BIN      := shin
-VERSION  := 0.16.0
+VERSION  := 0.17.0
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 GOFLAGS  := -trimpath
 

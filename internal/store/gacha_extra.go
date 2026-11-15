@@ -129,9 +129,11 @@ func (s *Store) BuySale(ctx context.Context, chatID, comprador string, s2 *Sale)
 	}
 
 	// Mover monedas (sin trampas: la economía ya valida los fondos antes).
+	// Upsert: el vendedor puede que aún no tenga fila en chat_users.
 	if _, err := tx.ExecContext(ctx, `
-		UPDATE economia SET wallet = wallet + ? WHERE chat_id = ? AND user_id = ?`,
-		s2.Price, chatID, s2.OwnerID); err != nil {
+		INSERT INTO chat_users(chat_id, user_id, coins) VALUES(?,?,?)
+		ON CONFLICT(chat_id, user_id) DO UPDATE SET coins = coins + ?`,
+		chatID, s2.OwnerID, s2.Price, s2.Price); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -162,6 +164,9 @@ func (s *Store) TransferChar(ctx context.Context, chatID, charID, from, to strin
 
 // SwapCharacteres: trade atómico (A da su X, recibe su Y; y al revés).
 func (s *Store) SwapCharacters(ctx context.Context, chatID, a, ida, b, idb string) error {
+	if err := s.ensureGachaExtra(ctx); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

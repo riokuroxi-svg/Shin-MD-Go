@@ -139,3 +139,24 @@ func recortarError(s string) string {
 	}
 	return s
 }
+
+// EfectoAudio aplica un filtro de ffmpeg (-af) a un audio y devuelve OPUS en
+// un ogg (lo que WhatsApp enseña como nota de voz). El filtro lo decide el
+// mapa del comando; este no confía en él para nada más que ir a -af.
+func EfectoAudio(ctx context.Context, audio []byte, filtro string) ([]byte, error) {
+	if !HayFFmpeg() {
+		return nil, ErrSinFFmpeg
+	}
+	if filtro == "" {
+		return nil, fmt.Errorf("filtro vacío")
+	}
+	args := []string{
+		"-hide_banner", "-loglevel", "error",
+		"-i", "pipe:0",
+		"-af", filtro,
+		"-c:a", "libopus",
+		"-b:a", "64k",
+		"-f", "ogg", "pipe:1",
+	}
+	return ejecutar(ctx, args, audio)
+}

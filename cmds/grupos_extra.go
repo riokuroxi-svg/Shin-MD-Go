@@ -11,8 +11,10 @@ package cmds
 
 import (
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
+	"time"
 
 	"shin-go/internal/apis"
 	"shin-go/internal/bot"
@@ -205,4 +207,103 @@ func hookAutoTraducir(c *bot.Context, parsed wa.Parsed) bool {
 		_ = c.Reply("🌐 (" + res.De + "→es) " + res.Texto)
 	}
 	return false
+}
+
+// ── extras B8-parity ──
+
+func init() {
+	// .adminonly: solo admins juegan la economía del grupo (llave del JS).
+	bot.Register(bot.Command{
+		Name: "adminonly", Category: bot.CatGroup, GroupOnly: true, AdminOnly: true,
+		Desc: "Cierra la economía del grupo a administradores: .adminonly on|off",
+		Run:  func(c *bot.Context) error { return cmdToggleGrupo(c, "adminonly", "economía solo-admins") },
+	})
+	// .rpg: el interruptor general de juegos/rpg del JS en el grupo.
+	bot.Register(bot.Command{
+		Name: "rpg", Category: bot.CatGroup, GroupOnly: true, AdminOnly: true,
+		Desc: "Enciende/apaga los juegos del grupo: .rpg on|off",
+		Run:  func(c *bot.Context) error { return cmdToggleGrupo(c, "rpg", "juegos") },
+	})
+	// .alertas: alias del JS (estaba suelto en options.js).
+	bot.Register(bot.Command{
+		Name: "alertas", Category: bot.CatGroup, GroupOnly: true,
+		Desc: "Lo mismo que .alerts",
+		Run:  func(c *bot.Context) error { return cmdToggleGrupo(c, store.KeyAlerts, "avisos del grupo") },
+	})
+	// .slut/.prostituirse: el trabajo "de riesgo" del JS (como crime pero con
+	// enfriamiento mayor y premio mayor).
+	bot.Register(bot.Command{
+		Name: "slut", Aliases: []string{"prostituirse"}, Category: bot.CatEconomy,
+		Desc: "Trabajo de riesgo (60% de éxito, premio alto, 30 min de enfriamiento).",
+		Run:  cmdSlut,
+	})
+	// .giveallharem: entrega TODO tu harem a otro (el JS lo tenía: ventas en bloque).
+	bot.Register(bot.Command{
+		Name: "giveallharem", Aliases: []string{"regalartodo"}, Category: bot.CatGacha,
+		Desc: "Regala todo tu harem a alguien: .giveallharem @user (no hay vuelta atrás).",
+		Run:  cmdGiveAllHarem,
+	})
+}
+
+// frases del JS para slut: lo aceptable del original, sin el fondo nsfw.
+var frasesSlutOk = []string{
+	"trabajaste en el mercado nocturno",
+	"pusiste orden en el club",
+	"te tocó mesa grande en el casino",
+	"fuiste guía de tour hasta tarde",
+}
+
+func cmdSlut(c *bot.Context) error {
+	on, err := ecoAllowed(c)
+	if !on || err != nil {
+		return err
+	}
+	chat := chatID(c)
+	ok, espera, err := c.DB.ClaimCooldown(c.Ctx, chat, c.SenderKey, "slut", 30*time.Minute) // 30 min en ns
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return c.Reply(fmt.Sprintf("Te quedan %v de enfriamiento.", espera.Round(time.Second)))
+	}
+	if rand.Intn(100) < 40 {
+		perdida := int64(30 + rand.Intn(120))
+		if _, err := c.DB.Charge(c.Ctx, chat, c.SenderKey, perdida); err != nil {
+			return c.Reply("salió mal, pero no tenías fondos para pagar el susto.")
+		}
+		return c.Reply(fmt.Sprintf("😬 Salió mal: te cobraron %d.", perdida))
+	}
+	premio := int64(150 + rand.Intn(350))
+	total, err := c.DB.AddCoins(c.Ctx, chat, c.SenderKey, premio)
+	if err != nil {
+		return err
+	}
+	return c.Reply(fmt.Sprintf("✔ %s y ganaste *%d* (saldo: %d).", pick(frasesSlutOk), premio, total))
+}
+
+func cmdGiveAllHarem(c *bot.Context) error {
+	m := c.Mentioned()
+	if len(m) == 0 {
+		return c.Reply("¿A quién le dejas todo? *.giveallharem @user*")
+	}
+	chat := c.Chat.String()
+	h, err := c.DB.Harem(c.Ctx, chat, c.SenderKey)
+	if err != nil {
+		return err
+	}
+	if len(h) == 0 {
+		return c.Reply("no tienes harem (mira *.roll*).")
+	}
+	destino := userKey(c, m[0])
+	movidos := 0
+	for _, oc := range h {
+		ok, err := c.DB.TransferChar(c.Ctx, chat, oc.CharID, c.SenderKey, destino)
+		if err != nil {
+			return err
+		}
+		if ok {
+			movidos++
+		}
+	}
+	return c.Reply(fmt.Sprintf("🎁 Le entregaste %d personajes a @%s. Tu harem quedó vacío.", movidos, m[0].User))
 }

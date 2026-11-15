@@ -158,12 +158,16 @@ func cmdBuyChar(c *bot.Context) error {
 	if sale.OwnerID == c.SenderKey {
 		return c.Reply("es tuyo; si lo quieres de vuelta, retíralo con *.removesale*.")
 	}
-	// Cobra antes de mover: sin fondos, no hay trato.
-	if _, err := c.DB.Charge(c.Ctx, chat, c.SenderKey, sale.Price); err != nil {
+	// Cobra antes de mover: sin fondos, no hay trato (Spend es cobro duro).
+	pagado, err := c.DB.Spend(c.Ctx, chat, c.SenderKey, sale.Price)
+	if err != nil {
+		return err
+	}
+	if !pagado {
 		return c.Reply(fmt.Sprintf("No tienes suficiente: cuesta *%d*.", sale.Price))
 	}
 	if err := c.DB.BuySale(c.Ctx, chat, c.SenderKey, sale); err != nil {
-		// Devolución si el truco se caía a medias (el cargo ya salió).
+		// Devolución si el trueque se caía a medias (el cargo ya salió).
 		_, _ = c.DB.AddCoins(c.Ctx, chat, c.SenderKey, sale.Price)
 		return err
 	}
