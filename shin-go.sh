@@ -15,17 +15,11 @@
 #       el .sha256 oficial antes de tocarlo. Sin root: va a ~/.local.
 #    3. Clona el repo (o lo actualiza si ya está; jamás toca un clon cuyo
 #       origin sea otro repo — p. ej. uno de desarrollo) y compila con `make`.
-<<<<<<< HEAD
-#    4. Deja el binario instalado, un .env listo para editar y —si puede—
-#       el servicio en marcha (systemd en Linux con root, script de arranque
-#       de Termux en Android, nohup en el resto).
-=======
 #    4. Deja el binario instalado ($PREFIX/bin/shin en Termux), un .env
 #       listo para editar y ARRANCA el bot: pasa a ser este proceso (exec),
 #       como el instalador del Shin-MD JS. Si no hay sesión de WhatsApp, el
 #       propio bot se detiene a preguntarte tu número y te da el código de
 #       8 letras. Con systemd (VPS con root) el arranque queda en la unidad.
->>>>>>> 6306afd (0.18.0 — arranque automático y vinculación por código, calcados del JS)
 #
 #  OPCIONAL: yt-dlp
 #    Los descargadores de vídeo sociales (.yt / .tiktok / .ig…) usan yt-dlp
@@ -451,12 +445,7 @@ arrancar() {
 cd "$PREFIX/bin" && exec "$PREFIX/bin/shin" >> "\$HOME/shin.log" 2>&1
 ARRANQUE
       chmod +x "$HOME/.termux/boot/shin"
-<<<<<<< HEAD
-      bien "arranque al encender el teléfono, si tienes la app Termux:Boot (~/.termux/boot/shin)"
-      dato "para arrancarlo ahora:  shin        (o ./shin desde $PREFIX/bin)"
-=======
       dato "arranque al encender el teléfono: ~/.termux/boot/shin (con la app Termux:Boot)"
->>>>>>> 6306afd (0.18.0 — arranque automático y vinculación por código, calcados del JS)
     else
       dato "(dry-run) script de arranque de Termux"
     fi
