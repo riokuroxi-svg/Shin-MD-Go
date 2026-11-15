@@ -330,6 +330,17 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.19.0** — **la cara**: el bot ahora se ve como el JS. Banner marca
+  Shin (`S H I N — M D / 反魂`, versión · runtime · plataforma) en cuanto
+  arranca; los logs de consola pasan de slog crudo a la forma
+  `09:28:24  mensaje` con el icono coloreado (✓ verde, ⚠ ámbar, ✕ rojo) —
+  al archivo rotativo va el formato completo, sin ANSI; y al conectar se
+  dibuja la caja `┌ SHIN-MD-GO … ┐` del JS con ● ACTIVO · pid, cuenta,
+  comandos · prefijos, disco/ram del equipo (`syscall.Statfs`/`Sysinfo`,
+  permitidas por el seccomp de Android) y la URL del panel web.
+  `NO_COLOR=1` y `TERM=dumb` la dejan en texto plano; Windows compila
+  (vitales por build-tag). Paquete nuevo `internal/consola` con tests de
+  ancho visible (los códigos de escape no ocupan pantalla).
 - **0.18.1** — hotfix del día: el cherry-pick dejó marcadores «<<<<<<<» sin resolver en la cabecera de shin-go.sh (script dash-roto); mismo contenido, cero marcadores.
 - **0.18.0** — **el arranque del JS sabor calcado**. El instalador ya no te
   deja un «ahora ejecuta shin»: ARRANCA el bot por `exec` (el bot pasa a ser

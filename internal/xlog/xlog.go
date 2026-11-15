@@ -6,10 +6,15 @@ package xlog
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
+
+	"shin-go/internal/consola"
 )
 
 type Level int
@@ -24,22 +29,59 @@ const (
 // Logger envuelve slog con métodos cortos e iconos.
 type Logger struct{ *slog.Logger }
 
-func New(level string, w io.Writer) *Logger {
-	if w == nil {
-		w = os.Stdout
-	}
-	var lv slog.Level
+func nivelDe(level string) slog.Level {
 	switch strings.ToLower(level) {
 	case "debug":
-		lv = slog.LevelDebug
+		return slog.LevelDebug
 	case "warn":
-		lv = slog.LevelWarn
+		return slog.LevelWarn
 	case "error":
-		lv = slog.LevelError
+		return slog.LevelError
 	default:
-		lv = slog.LevelInfo
+		return slog.LevelInfo
 	}
-	base := slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+}
+
+// handlerConsola — la cara de los logs en una terminal de verdad, sabor JS:
+//
+//	09:28:24  consola lista
+//
+// sin el ruido «time= level= msg=» de slog. El color solo toca el reloj y
+// el icono que el propio mensaje ya trae (✓ ⚠ ✕); a archivo va el handler
+// de texto completo, porque un log sí es para grep, no para mirar.
+type handlerConsola struct {
+	min slog.Level
+	w   io.Writer
+}
+
+func (h handlerConsola) Enabled(_ context.Context, l slog.Level) bool { return l >= h.min }
+
+func (h handlerConsola) Handle(_ context.Context, r slog.Record) error {
+	hora := consola.Tenue(r.Time.Format("15:04:05"))
+	msg := r.Message
+	switch {
+	case strings.HasPrefix(msg, "✓"):
+		msg = consola.Menta(msg)
+	case strings.HasPrefix(msg, "⚠"):
+		msg = consola.Ambar(msg)
+	case strings.HasPrefix(msg, "✕"):
+		msg = consola.Rojo(msg)
+	}
+	// Lo poco que lleve atributos (un Ctx) va compacto al final, no en
+	// columna: en pantalla manda leerlo, no alinearlo.
+	r.Attrs(func(a slog.Attr) bool {
+		msg += " " + consola.Tenue(a.Key+"="+a.Value.String())
+		return true
+	})
+	_, err := fmt.Fprintf(h.w, "%s  %s\n", hora, msg)
+	return err
+}
+
+func (h handlerConsola) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h handlerConsola) WithGroup(_ string) slog.Handler      { return h }
+
+func handlerTexto(lv slog.Level, w io.Writer) slog.Handler {
+	return slog.NewTextHandler(w, &slog.HandlerOptions{
 		Level: lv,
 		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
@@ -47,8 +89,73 @@ func New(level string, w io.Writer) *Logger {
 			}
 			return a
 		},
-	}))
-	return &Logger{base}
+	})
+}
+
+func New(level string, w io.Writer) *Logger {
+	if w == nil {
+		w = os.Stdout
+	}
+	lv := nivelDe(level)
+	if f, ok := w.(*os.File); ok && consola.ConColor() && term.IsTerminal(int(f.Fd())) {
+		return &Logger{slog.New(handlerConsola{min: lv, w: w})}
+	}
+	return &Logger{slog.New(handlerTexto(lv, w))}
+}
+
+// fanout reparte cada registro a los dos handlers (consola bonita y archivo
+// con formato completo). WithAttrs clona ambos, que es lo que espera slog.
+type fanout []slog.Handler
+
+func (f fanout) Enabled(ctx context.Context, l slog.Level) bool {
+	for _, h := range f {
+		if h.Enabled(ctx, l) {
+			return true
+		}
+	}
+	return false
+}
+
+func (f fanout) Handle(ctx context.Context, r slog.Record) error {
+	var primero error
+	for _, h := range f {
+		if !h.Enabled(ctx, r.Level) {
+			continue
+		}
+		if err := h.Handle(ctx, r.Clone()); err != nil && primero == nil {
+			primero = err
+		}
+	}
+	return primero
+}
+
+func (f fanout) WithAttrs(a []slog.Attr) slog.Handler {
+	f2 := make(fanout, len(f))
+	for i, h := range f {
+		f2[i] = h.WithAttrs(a)
+	}
+	return f2
+}
+
+func (f fanout) WithGroup(g string) slog.Handler {
+	f2 := make(fanout, len(f))
+	for i, h := range f {
+		f2[i] = h.WithGroup(g)
+	}
+	return f2
+}
+
+// NewDoble: consola legible Y archivo completo a la vez (log a disco con
+// rotación). En pantalla manda leer; en archivo manda grepear.
+func NewDoble(level string, consolaW io.Writer, archivoW io.Writer) *Logger {
+	if consolaW == nil {
+		consolaW = os.Stdout
+	}
+	lv := nivelDe(level)
+	return &Logger{slog.New(fanout{
+		handlerConsola{min: lv, w: consolaW},
+		handlerTexto(lv, archivoW),
+	})}
 }
 
 func (l *Logger) Debug(m string) { l.Logger.Debug("◐ " + m) }

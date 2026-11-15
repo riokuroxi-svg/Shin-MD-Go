@@ -11,7 +11,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -23,6 +22,7 @@ import (
 
 	"shin-go/internal/bot"
 	"shin-go/internal/config"
+	"shin-go/internal/consola"
 	"shin-go/internal/red"
 	"shin-go/internal/store"
 	"shin-go/internal/wa"
@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.18.1"
+var version = "0.19.0"
 
 func main() {
 	var (
@@ -52,6 +52,8 @@ func main() {
 		fmt.Println("Shin-MD (Go)", version)
 		return
 	}
+
+	fmt.Print(consola.Banner(version)) // lo primero que se ve, como en el JS
 
 	cmds.SetVersion(version) // .info muestra la versión real del binario
 
@@ -85,7 +87,7 @@ func main() {
 		if rot, err := xlog.AbrirRotativo(cfg.LogFile, 4<<20, 3); err != nil {
 			log.Warn("no se pudo abrir " + cfg.LogFile + ": " + err.Error())
 		} else {
-			log = xlog.New(cfg.LogLevel, io.MultiWriter(os.Stdout, rot))
+			log = xlog.NewDoble(cfg.LogLevel, os.Stdout, rot) // consola bonita + archivo grepeable
 			defer rot.Cerrar()
 			log.Info("Log: " + cfg.LogFile + " (rotación 4 MB × 3)")
 		}
@@ -244,7 +246,23 @@ func main() {
 	}, log.Info)
 	panel.Arrancar(ctx)
 
-	log.Ok("Shin-MD en marcha. Ctrl+C para salir.")
+	log.Ok("Shin-MD-Go en marcha. Ctrl+C para salir.")
+
+	// La caja que cierra el arranque, como en el JS: cuenta, comandos,
+	// prefijos, vitales del equipo y la dirección del panel web.
+	cuenta := client.WA.Store.PushName
+	if cuenta == "" && client.WA.Store.ID != nil {
+		cuenta = client.WA.Store.ID.User
+	}
+	consola.PanelListo(os.Stdout, consola.Listo{
+		Version:  version,
+		Cuenta:   cuenta,
+		Comandos: uniq,
+		Prefijos: cfg.Prefixes,
+		Web:      fmt.Sprintf("http://127.0.0.1:%d", cfg.WebPort),
+		PID:      os.Getpid(),
+	})
+
 	<-ctx.Done()
 	log.Info("Cerrando limpio…")
 }
