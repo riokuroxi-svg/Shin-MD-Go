@@ -12,6 +12,8 @@ package wa
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -33,7 +35,7 @@ func (c *Client) trySend(ctx context.Context, chat types.JID, msg *waE2E.Message
 		extra = []whatsmeow.SendRequestExtra{{AdditionalNodes: &n}}
 	}
 
-	if _, err := c.WA.SendMessage(ctx, chat, msg, extra...); err == nil {
+	if _, err := c.waClient.SendMessage(ctx, chat, msg, extra...); err == nil {
 		return nil
 	} else if fallback == "" {
 		return err
@@ -41,48 +43,48 @@ func (c *Client) trySend(ctx context.Context, chat types.JID, msg *waE2E.Message
 		c.Log.Warn("envío rico falló (" + err.Error() + "), cayendo a texto plano")
 	}
 
-	_, err := c.WA.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(fallback)})
+	_, err := c.waClient.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(fallback)})
 	return err
 }
 
 // ─── Tarjetas con botones ────────────────────────────────────────────────────
 
 // SendButtons: tarjeta con botones (el comportamiento de siempre).
-func (c *Client) SendButtons(ctx context.Context, chat types.JID, title, body, footer string, priority bool, buttons ...ui.Button) error {
+func (c *Client) SendButtons(ctx context.Context, chat JID, title, body, footer string, priority bool, buttons ...ui.Button) error {
 	msg := ui.BuildButtons(title, body, footer, buttons...)
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat, msg, ui.BizNodes(chat, true), ui.Plain(body, footer, buttons...))
+		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), ui.Plain(body, footer, buttons...))
 	})
 }
 
 // SendButtonsImage: tarjeta con IMAGEN de cabecera + botones. Es la que más
 // luce en un menú: foto arriba, texto y botones. Si la subida falla, degrada
 // a la tarjeta de texto (nunca se queda sin responder).
-func (c *Client) SendButtonsImage(ctx context.Context, chat types.JID, image []byte, title, body, footer string, priority bool, buttons ...ui.Button) error {
+func (c *Client) SendButtonsImage(ctx context.Context, chat JID, image []byte, title, body, footer string, priority bool, buttons ...ui.Button) error {
 	imgMsg, err := c.uploadImage(ctx, image)
 	if err != nil {
 		return c.SendButtons(ctx, chat, title, body, footer, priority, buttons...)
 	}
 	msg := ui.BuildButtonsImage(imgMsg, title, body, footer, buttons...)
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat, msg, ui.BizNodes(chat, true), ui.Plain(body, footer, buttons...))
+		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), ui.Plain(body, footer, buttons...))
 	})
 }
 
 // SendCarousel: carrusel de tarjetas deslizables (con el envoltorio carousel).
-func (c *Client) SendCarousel(ctx context.Context, chat types.JID, body string, priority bool, cards ...ui.Card) error {
+func (c *Client) SendCarousel(ctx context.Context, chat JID, body string, priority bool, cards ...ui.Card) error {
 	msg := ui.BuildCarousel(cards...)
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat, msg, ui.BizNodesCarousel(chat, true), ui.PlainCarousel(body, cards...))
+		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodesCarousel(chat.whatsmeow(), true), ui.PlainCarousel(body, cards...))
 	})
 }
 
 // SendList: desplegable clásico. No lleva nodos <biz>: el propio servidor le
 // añade sus atributos (v=2, type=single_select).
-func (c *Client) SendList(ctx context.Context, chat types.JID, title, body, buttonText, footer string, priority bool, sections ...ui.ListSection) error {
+func (c *Client) SendList(ctx context.Context, chat JID, title, body, buttonText, footer string, priority bool, sections ...ui.ListSection) error {
 	msg := ui.BuildList(title, body, buttonText, footer, sections...)
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat, msg, nil, ui.PlainList(title, body, buttonText, footer, sections...))
+		return c.trySend(ctx, chat.whatsmeow(), msg, nil, ui.PlainList(title, body, buttonText, footer, sections...))
 	})
 }
 
@@ -90,23 +92,66 @@ func (c *Client) SendList(ctx context.Context, chat types.JID, title, body, butt
 
 // SendPoll usa el helper OFICIAL de whatsmeow (BuildPollCreation). En Baileys
 // esto se arma a mano: el PollCreationMessage lo pone el usuario.
-func (c *Client) SendPoll(ctx context.Context, chat types.JID, question string, options []string, selectable int, priority bool) error {
+func (c *Client) SendPoll(ctx context.Context, chat JID, question string, options []string, selectable int, priority bool) error {
 	if selectable < 1 {
 		selectable = 1
 	}
-	msg := c.WA.BuildPollCreation(question, options, selectable)
+	msg := c.waClient.BuildPollCreation(question, options, selectable)
 	return c.Queue.Do(ctx, len([]rune(question)), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
 
+// SendPollSpec traduce la solicitud interna de encuesta/quiz a Protobuf dentro
+// del adaptador. Los comandos solo manejan texto, opciones e índice correcto.
+func (c *Client) SendPollSpec(ctx context.Context, chat JID, spec PollSpec, priority bool) error {
+	msg, err := buildPollMessage(spec)
+	if err != nil {
+		return err
+	}
+	return c.Queue.Do(ctx, len([]rune(spec.Question)), priority, func() error {
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
+		return err
+	})
+}
+
+func buildPollMessage(spec PollSpec) (*waE2E.Message, error) {
+	if len(spec.Options) < 2 || spec.Selectable < 1 || spec.Selectable > len(spec.Options) {
+		return nil, errors.New("opciones o cantidad seleccionable inválidas")
+	}
+	options := make([]*waE2E.PollCreationMessage_Option, len(spec.Options))
+	for i, option := range spec.Options {
+		options[i] = &waE2E.PollCreationMessage_Option{OptionName: proto.String(option)}
+	}
+	creation := &waE2E.PollCreationMessage{
+		Name:                   proto.String(spec.Question),
+		Options:                options,
+		SelectableOptionsCount: proto.Uint32(uint32(spec.Selectable)),
+	}
+	if spec.Quiz {
+		if spec.Correct < 0 || spec.Correct >= len(options) {
+			return nil, errors.New("índice de respuesta correcta inválido")
+		}
+		creation.PollType = waE2E.PollType_QUIZ.Enum()
+		creation.CorrectAnswer = options[spec.Correct]
+	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		return nil, err
+	}
+	return &waE2E.Message{
+		PollCreationMessage: creation,
+		MessageContextInfo:  &waE2E.MessageContextInfo{MessageSecret: secret},
+	}, nil
+}
+
 // SendPollAddOption: añade una opción a una encuesta EN VIVO (sin helper
 // oficial en ninguna lib: el proto está, aquí lo armamos).
-func (c *Client) SendPollAddOption(ctx context.Context, chat types.JID, pollKey *waCommon.MessageKey, option string, priority bool) error {
+func (c *Client) SendPollAddOption(ctx context.Context, chat JID, pollKey *waCommon.MessageKey, option string, priority bool) error {
 	msg := ui.BuildPollAddOption(pollKey, option)
 	return c.Queue.Do(ctx, len([]rune(option)), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
@@ -114,19 +159,19 @@ func (c *Client) SendPollAddOption(ctx context.Context, chat types.JID, pollKey 
 // PinMessage: fija/desfija un mensaje en el chat. WhatsApp no lo trata como
 // mensaje de chat (no consume cupo del calentamiento), pero se manda por la
 // cola igual para no romper el espaciado entre envíos.
-func (c *Client) PinMessage(ctx context.Context, chat types.JID, key *waCommon.MessageKey, pin bool) error {
-	msg := ui.BuildPin(key, pin)
+func (c *Client) PinMessage(ctx context.Context, chat JID, key MessageKey, pin bool) error {
+	msg := ui.BuildPin(ui.Key(key.Chat.whatsmeow(), key.FromMe, types.MessageID(key.ID), key.Sender.whatsmeow()), pin)
 	return c.Queue.Do(ctx, 0, true, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
 
 // SendEvent: evento de calendario (lo avisa WhatsApp, no el bot).
-func (c *Client) SendEvent(ctx context.Context, chat types.JID, name, desc string, start, end time.Time, extraGuests bool, reminder time.Duration, priority bool) error {
+func (c *Client) SendEvent(ctx context.Context, chat JID, name, desc string, start, end time.Time, extraGuests bool, reminder time.Duration, priority bool) error {
 	msg := ui.BuildEvent(name, desc, start, end, extraGuests, reminder)
 	return c.Queue.Do(ctx, len([]rune(name)), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
@@ -134,12 +179,24 @@ func (c *Client) SendEvent(ctx context.Context, chat types.JID, name, desc strin
 // SendRich: respuesta enriquecida estilo IA (markdown/código/tabla).
 // Gateada por RICH_AI=1 y SIEMPRE con fallback: falta verificar en teléfono
 // que la app la pinte desde una cuenta normal (por eso no va por defecto).
-func (c *Client) SendRich(ctx context.Context, chat types.JID, msg *waE2E.Message, fallback string, priority bool) error {
+func (c *Client) SendRich(ctx context.Context, chat JID, msg *waE2E.Message, fallback string, priority bool) error {
 	if !c.cfg.RichAI {
 		return c.SendText(ctx, chat, fallback, priority)
 	}
 	return c.Queue.Do(ctx, len([]rune(fallback)), priority, func() error {
-		return c.trySend(ctx, chat, msg, ui.BizNodes(chat, true), fallback)
+		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), fallback)
+	})
+}
+
+// SendRichCard conserva el fallback del flujo experimental y construye el
+// formato externo en el adaptador, no en cmds/.
+func (c *Client) SendRichCard(ctx context.Context, chat JID, card RichCard, fallback string, priority bool) error {
+	if !c.cfg.RichAI {
+		return c.SendText(ctx, chat, fallback, priority)
+	}
+	msg := ui.RichTextCard(card.Text, card.Language, card.Code)
+	return c.Queue.Do(ctx, len([]rune(fallback)), priority, func() error {
+		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), fallback)
 	})
 }
 
@@ -150,13 +207,13 @@ func (c *Client) SendRich(ctx context.Context, chat types.JID, msg *waE2E.Messag
 // Pasa por la cola anti-ban: un borrado es un envío más, y antes salía por
 // fuera de la cola (sin espaciado) justo en los casos en los que el bot borra
 // en ráfaga, que es donde más se nota un patrón de abuso.
-func (c *Client) DeleteMessage(ctx context.Context, chat, sender types.JID, id types.MessageID) error {
+func (c *Client) DeleteMessage(ctx context.Context, chat, sender JID, id types.MessageID) error {
 	if id == "" {
 		return nil
 	}
-	msg := c.WA.BuildRevoke(chat, sender, id)
+	msg := c.waClient.BuildRevoke(chat.whatsmeow(), sender.whatsmeow(), types.MessageID(id))
 	return c.Queue.Do(ctx, 0, false, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
@@ -164,7 +221,7 @@ func (c *Client) DeleteMessage(ctx context.Context, chat, sender types.JID, id t
 // uploadImage sube una imagen y devuelve el ImageMessage listo para encabezar
 // una tarjeta interactiva.
 func (c *Client) uploadImage(ctx context.Context, data []byte) (*waE2E.ImageMessage, error) {
-	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaImage)
+	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaImage)
 	if err != nil {
 		return nil, err
 	}

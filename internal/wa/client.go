@@ -35,7 +35,7 @@ import (
 )
 
 type Client struct {
-	WA        *whatsmeow.Client
+	waClient  *whatsmeow.Client
 	Queue     *Queue
 	IDs       *Resolver // traduce teléfono ↔ LID (ver identity.go)
 	Log       *xlog.Logger
@@ -48,8 +48,8 @@ type Client struct {
 	// context.Background() y un cierre limpio no cancelaba nada.
 	baseCtx context.Context
 
-	onMessage   func(ctx context.Context, evt *events.Message)
-	onGroupInfo func(ctx context.Context, evt *events.GroupInfo)
+	onMessage   func(ctx context.Context, msg *IncomingMessage)
+	onGroupInfo func(ctx context.Context, evt *GroupChange)
 }
 
 // New abre la base de sesión y construye el cliente. No se conecta todavía.
@@ -88,7 +88,7 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityS
 	cli.EnableAutoReconnect = true // clave: nada de borrar la sesión por cortes de red
 
 	c := &Client{
-		WA:        cli,
+		waClient:  cli,
 		Queue:     NewQueue(cfg),
 		IDs:       NewResolver(mem, log),
 		Log:       log,
@@ -112,14 +112,13 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityS
 			log.Err("Sesión cerrada desde el teléfono (LoggedOut) — hace falta vincular otra vez")
 		case *events.Message:
 			if c.onMessage != nil {
-				c.onMessage(c.baseCtx, evt)
+				c.onMessage(c.baseCtx, NormalizeMessage(evt, c.cfg.Prefixes))
 			}
 		case *events.GroupInfo:
-			// Entradas, salidas y cambios de rol: los usa la bienvenida y la
-			// despedida, y sirven para tirar la caché del grupo en cuanto
-			// cambia algo que afecta a los permisos.
+			// La conversión al modelo interno sucede aquí, antes del callback del
+			// router y de los oyentes de negocio.
 			if c.onGroupInfo != nil {
-				c.onGroupInfo(c.baseCtx, evt)
+				c.onGroupInfo(c.baseCtx, normalizeGroupChange(evt))
 			}
 		}
 	})
@@ -139,25 +138,40 @@ func secureSessionFiles(path string, log *xlog.Logger) {
 	}
 }
 
-func (c *Client) OnMessage(fn func(ctx context.Context, evt *events.Message)) { c.onMessage = fn }
+func (c *Client) OnMessage(fn func(ctx context.Context, msg *IncomingMessage)) { c.onMessage = fn }
 
-// OnGroupInfo registra el manejador de eventos de grupo (entradas, salidas,
-// ascensos, cambios de nombre…). Solo hay uno: main() pone el del bot.
-func (c *Client) OnGroupInfo(fn func(ctx context.Context, evt *events.GroupInfo)) { c.onGroupInfo = fn }
+// OnGroupInfo registra el manejador interno de cambios de grupo. El evento
+// externo ya fue normalizado por el adaptador.
+func (c *Client) OnGroupInfo(fn func(ctx context.Context, evt *GroupChange)) { c.onGroupInfo = fn }
 
-func (c *Client) LoggedIn() bool { return c.WA.Store.ID != nil }
+func (c *Client) LoggedIn() bool { return c.waClient != nil && c.waClient.Store.ID != nil }
+
+// Connected informa el estado de conexión sin exponer el cliente externo.
+func (c *Client) Connected() bool { return c != nil && c.waClient != nil && c.waClient.IsConnected() }
+
+// AccountName devuelve el nombre de perfil o, como reserva, el usuario del
+// JID propio. Es lo único que necesita mostrar el arranque del bot.
+func (c *Client) AccountName() string {
+	if c == nil || c.waClient == nil || c.waClient.Store == nil {
+		return ""
+	}
+	if name := c.waClient.Store.PushName; name != "" {
+		return name
+	}
+	return c.OwnID().User
+}
 
 // OwnLID es el LID del propio bot (vacío si WhatsApp no lo dio todavía).
 // Lo usan los comandos que necesitan saber cómo aparece el bot en un grupo.
-func (c *Client) OwnLID() types.JID { return c.WA.Store.GetLID().ToNonAD() }
+func (c *Client) OwnLID() JID { return jidFromWhatsmeow(c.waClient.Store.GetLID().ToNonAD()) }
 
 // OwnID es el JID del propio bot (vacío si aún no hay sesión). Sirve para no
 // dejar que los comandos actúen sobre el bot: robarle, curarlo, etc.
-func (c *Client) OwnID() types.JID {
-	if c.WA == nil || c.WA.Store.ID == nil {
-		return types.JID{}
+func (c *Client) OwnID() JID {
+	if c.waClient == nil || c.waClient.Store.ID == nil {
+		return JID{}
 	}
-	return c.WA.Store.ID.ToNonAD()
+	return jidFromWhatsmeow(c.waClient.Store.ID.ToNonAD())
 }
 
 // Uptime: tiempo desde que arrancó el proceso (lo muestra .ping).
@@ -167,7 +181,7 @@ func (c *Client) Uptime() time.Duration { return time.Since(c.StartedAt) }
 func (c *Client) Context() context.Context { return c.baseCtx }
 
 func (c *Client) Close() {
-	c.WA.Disconnect()
+	c.waClient.Disconnect()
 	if c.container != nil {
 		_ = c.container.Close()
 	}
@@ -179,7 +193,7 @@ func (c *Client) Close() {
 // que lo escanee— y un QR dibujado en un log es una trampa honesta.
 func (c *Client) Login(ctx context.Context, phone string) error {
 	if c.LoggedIn() {
-		return c.WA.Connect()
+		return c.waClient.Connect()
 	}
 
 	phone = NormalizarTelefono(phone)
@@ -190,7 +204,7 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 	// primero entra el socket, y con número ya puesto el QR ni se genera;
 	// luego se pide el código. El cliente queda ya conectado al volver.
 	sp := consola.Spinner(os.Stdout, "conectando con WhatsApp…")
-	if err := c.WA.Connect(); err != nil {
+	if err := c.waClient.Connect(); err != nil {
 		if sp != nil {
 			sp.Fail("no hubo conexión")
 		}
@@ -199,7 +213,7 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 	if sp != nil {
 		sp.UpdateText("pidiendo tu código…")
 	}
-	code, err := c.WA.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Shin-MD (Go)")
+	code, err := c.waClient.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Shin-MD (Go)")
 	if err != nil {
 		if sp != nil {
 			sp.Fail("no llegó el código")
@@ -217,9 +231,9 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 // ─── Envíos ────────────────────────────────────────────────────────────────
 
 // SendText respeta la cola anti-ban. priority salta el cupo de calentamiento.
-func (c *Client) SendText(ctx context.Context, chat types.JID, text string, priority bool) error {
+func (c *Client) SendText(ctx context.Context, chat JID, text string, priority bool) error {
 	return c.Queue.Do(ctx, len([]rune(text)), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), &waE2E.Message{Conversation: proto.String(text)})
 		return err
 	})
 }
@@ -231,10 +245,10 @@ func (c *Client) SendQueue() *Queue { return c.Queue }
 // SendTextID manda texto y devuelve el id del mensaje enviado. Lo necesita el
 // gacha: para reclamar un personaje hay que poder identificar el mensaje que
 // lo anunció, y ese id solo lo da WhatsApp después de enviarlo.
-func (c *Client) SendTextID(ctx context.Context, chat types.JID, text string, priority bool) (string, error) {
+func (c *Client) SendTextID(ctx context.Context, chat JID, text string, priority bool) (string, error) {
 	var id string
 	err := c.Queue.Do(ctx, len([]rune(text)), priority, func() error {
-		resp, err := c.WA.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
+		resp, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), &waE2E.Message{Conversation: proto.String(text)})
 		if err != nil {
 			return err
 		}
@@ -248,8 +262,8 @@ func (c *Client) SendTextID(ctx context.Context, chat types.JID, text string, pr
 }
 
 // SendImageID sube una imagen con pie de foto y devuelve el id del mensaje.
-func (c *Client) SendImageID(ctx context.Context, chat types.JID, data []byte, caption string, priority bool) (string, error) {
-	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaImage)
+func (c *Client) SendImageID(ctx context.Context, chat JID, data []byte, caption string, priority bool) (string, error) {
+	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaImage)
 	if err != nil {
 		return "", err
 	}
@@ -265,7 +279,7 @@ func (c *Client) SendImageID(ctx context.Context, chat types.JID, data []byte, c
 	}}
 	var id string
 	err = c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
-		resp, err := c.WA.SendMessage(ctx, chat, msg)
+		resp, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		if err != nil {
 			return err
 		}
@@ -279,8 +293,8 @@ func (c *Client) SendImageID(ctx context.Context, chat types.JID, data []byte, c
 }
 
 // SendImage sube y manda una imagen con pie de foto.
-func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, caption string, priority bool) error {
-	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaImage)
+func (c *Client) SendImage(ctx context.Context, chat JID, data []byte, caption string, priority bool) error {
+	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaImage)
 	if err != nil {
 		return err
 	}
@@ -295,7 +309,7 @@ func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, cap
 		Mimetype:      proto.String("image/jpeg"),
 	}}
 	return c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
@@ -305,10 +319,10 @@ func (c *Client) SendImage(ctx context.Context, chat types.JID, data []byte, cap
 //
 // Existe para no duplicar la cola anti-ban en cada tipo de mensaje: todo lo que
 // sale del bot pasa por `Queue.Do`, con o sin envoltorio.
-func (c *Client) SendProto(ctx context.Context, chat types.JID, msg *waE2E.Message, priority bool) (string, error) {
+func (c *Client) SendProto(ctx context.Context, chat JID, msg *waE2E.Message, priority bool) (string, error) {
 	var id string
 	err := c.Queue.Do(ctx, 120, priority, func() error {
-		resp, err := c.WA.SendMessage(ctx, chat, msg)
+		resp, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		if err != nil {
 			return err
 		}
@@ -323,11 +337,11 @@ func (c *Client) SendProto(ctx context.Context, chat types.JID, msg *waE2E.Messa
 
 // SendDocument sube y manda un archivo con nombre. Lo usan `.get`, `.gitclone`
 // y todo lo que devuelve un archivo en vez de texto.
-func (c *Client) SendDocument(ctx context.Context, chat types.JID, data []byte, nombre, mimetype string, priority bool) error {
+func (c *Client) SendDocument(ctx context.Context, chat JID, data []byte, nombre, mimetype string, priority bool) error {
 	if mimetype == "" {
 		mimetype = "application/octet-stream"
 	}
-	up, err := c.WA.Upload(ctx, data, whatsmeow.MediaDocument)
+	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaDocument)
 	if err != nil {
 		return err
 	}
@@ -343,25 +357,30 @@ func (c *Client) SendDocument(ctx context.Context, chat types.JID, data []byte, 
 		Title:         proto.String(nombre),
 	}}
 	return c.Queue.Do(ctx, 120, priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
 
 // PerfilPublico devuelve lo que WhatsApp deja ver de alguien sin ser su
 // contacto: nombre verificado, estado (bio), foto y si la cuenta existe.
-func (c *Client) PerfilPublico(ctx context.Context, jid types.JID) (types.UserInfo, error) {
-	info, err := c.WA.GetUserInfo(ctx, []types.JID{jid.ToNonAD()})
+func (c *Client) PerfilPublico(ctx context.Context, jid JID) (PublicProfile, error) {
+	info, err := c.waClient.GetUserInfo(ctx, []types.JID{jid.ToNonAD().whatsmeow()})
 	if err != nil {
-		return types.UserInfo{}, err
+		return PublicProfile{}, err
 	}
-	return info[jid.ToNonAD()], nil
+	raw := info[jid.ToNonAD().whatsmeow()]
+	profile := PublicProfile{Status: raw.Status, LID: jidFromWhatsmeow(raw.LID)}
+	if raw.VerifiedName != nil && raw.VerifiedName.Details != nil {
+		profile.VerifiedName = raw.VerifiedName.Details.GetVerifiedName()
+	}
+	return profile, nil
 }
 
 // FotoPerfil devuelve los bytes de la foto de perfil, o error si no tiene (o si
 // la tiene privada para este número).
-func (c *Client) FotoPerfil(ctx context.Context, jid types.JID, previa bool) ([]byte, error) {
-	info, err := c.WA.GetProfilePictureInfo(ctx, jid.ToNonAD(), &whatsmeow.GetProfilePictureParams{Preview: previa})
+func (c *Client) FotoPerfil(ctx context.Context, jid JID, previa bool) ([]byte, error) {
+	info, err := c.waClient.GetProfilePictureInfo(ctx, jid.ToNonAD().whatsmeow(), &whatsmeow.GetProfilePictureParams{Preview: previa})
 	if err != nil {
 		return nil, err
 	}
@@ -403,22 +422,22 @@ func bajarURL(ctx context.Context, u string, max int64) ([]byte, error) {
 
 // ExisteEnWhatsApp dice si un número está registrado, consultando el servidor
 // (no la libreta del bot).
-func (c *Client) ExisteEnWhatsApp(ctx context.Context, telefono string) (types.JID, bool, error) {
-	res, err := c.WA.IsOnWhatsApp(ctx, []string{telefono})
+func (c *Client) ExisteEnWhatsApp(ctx context.Context, telefono string) (JID, bool, error) {
+	res, err := c.waClient.IsOnWhatsApp(ctx, []string{telefono})
 	if err != nil {
-		return types.JID{}, false, err
+		return JID{}, false, err
 	}
 	for _, r := range res {
 		if r.IsIn {
-			return r.JID, true, nil
+			return jidFromWhatsmeow(r.JID), true, nil
 		}
 	}
-	return types.JID{}, false, nil
+	return JID{}, false, nil
 }
 
 // Presence: "available" / "unavailable" / "composing" (como el JS).
-func (c *Client) SetTyping(ctx context.Context, chat types.JID) {
-	_ = c.WA.SendChatPresence(ctx, chat, types.ChatPresenceComposing, types.ChatPresenceMediaText)
+func (c *Client) SetTyping(ctx context.Context, chat JID) {
+	_ = c.waClient.SendChatPresence(ctx, chat.whatsmeow(), types.ChatPresenceComposing, types.ChatPresenceMediaText)
 }
 
 // Config devuelve la configuración con la que se creó el cliente (los

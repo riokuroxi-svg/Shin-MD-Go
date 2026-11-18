@@ -110,8 +110,8 @@ func init() {
 		Desc: "Enlace para añadir el bot a un grupo.",
 		Run: func(c *bot.Context) error {
 			jid := "tu número registrado en WhatsApp"
-			if c.Bot.WA != nil && c.Bot.WA.Store != nil && c.Bot.WA.Store.ID != nil {
-				jid = c.Bot.WA.Store.ID.User
+			if own := c.Bot.OwnID(); !own.IsEmpty() {
+				jid = own.User
 			}
 			return c.Reply("📲 Para meterme en un grupo: añade *@" + jid +
 				"* como contacto y luego agrégalo al grupo. Si el grupo tiene aprobación, que un admin lo acepte.")

@@ -34,10 +34,9 @@ import (
 	"sync"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/musica"
+	"shin-go/internal/wa"
 )
 
 // maxDescargasParalelas es el semáforo por chat del play.js, conservado: dos
@@ -54,8 +53,8 @@ var clienteMusica = func() *musica.Cliente { return gMusica }
 // (y el segundo «.play» tiene que esperar, no pisar).
 var (
 	muMusica  sync.Mutex
-	slotsMus  = map[types.JID]int{}
-	listasMus = map[types.JID]listaPlay{}
+	slotsMus  = map[wa.JID]int{}
+	listasMus = map[wa.JID]listaPlay{}
 )
 
 // listaPlay guarda la última tabla de resultados por chat: «.play 2» la
@@ -195,7 +194,7 @@ func cmdEscucha(c *bot.Context) error {
 
 // ── Presentación y pelo ─────────────────────────────────────────────────────
 
-func guardarLista(jid types.JID, b musica.Busqueda) {
+func guardarLista(jid wa.JID, b musica.Busqueda) {
 	if len(b.Pistas) == 0 {
 		return
 	}

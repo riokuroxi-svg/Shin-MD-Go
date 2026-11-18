@@ -14,18 +14,17 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/types"
 )
 
 // SendSticker sube y manda un sticker WebP.
 //
 // `animado` es obligatorio y no se adivina: WhatsApp usa ese campo para
 // decidir si lo reproduce o lo muestra quieto.
-func (c *Client) SendSticker(ctx context.Context, chat types.JID, webp []byte, animado bool, priority bool) error {
+func (c *Client) SendSticker(ctx context.Context, chat JID, webp []byte, animado bool, priority bool) error {
 	if len(webp) == 0 {
 		return errVacio
 	}
-	up, err := c.WA.Upload(ctx, webp, whatsmeow.MediaImage)
+	up, err := c.waClient.Upload(ctx, webp, whatsmeow.MediaImage)
 	if err != nil {
 		return err
 	}
@@ -40,17 +39,17 @@ func (c *Client) SendSticker(ctx context.Context, chat types.JID, webp []byte, a
 		IsAnimated:    proto.Bool(animado),
 	}}
 	return c.Queue.Do(ctx, 1, priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
 
 // SendVideo manda un MP4 (lo que devuelve `.toimg` con un sticker animado).
-func (c *Client) SendVideo(ctx context.Context, chat types.JID, mp4 []byte, caption string, priority bool) error {
+func (c *Client) SendVideo(ctx context.Context, chat JID, mp4 []byte, caption string, priority bool) error {
 	if len(mp4) == 0 {
 		return errVacio
 	}
-	up, err := c.WA.Upload(ctx, mp4, whatsmeow.MediaVideo)
+	up, err := c.waClient.Upload(ctx, mp4, whatsmeow.MediaVideo)
 	if err != nil {
 		return err
 	}
@@ -65,7 +64,7 @@ func (c *Client) SendVideo(ctx context.Context, chat types.JID, mp4 []byte, capt
 		Mimetype:      proto.String("video/mp4"),
 	}}
 	return c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }

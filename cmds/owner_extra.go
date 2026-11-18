@@ -98,11 +98,11 @@ func cmdAudioFx(c *bot.Context) error {
 		return c.Reply("Este efecto necesita ffmpeg instalado en el servidor (el brat también; sin él no hay audio).")
 	}
 	// responder a audio
-	medio, ok := wa.MedioDe(c.Event.Message)
+	medio, ok := wa.MedioDeEntrada(c.Event)
 	if !ok || (medio.Tipo != wa.MedioAudio) {
 		return c.Reply("responde a un *audio* o a una nota de voz con *." + c.Command + "*.")
 	}
-	datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+	datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 	if err != nil || len(datos) == 0 {
 		return c.Reply("no pude bajar el audio.")
 	}

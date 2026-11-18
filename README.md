@@ -302,7 +302,7 @@ Shin-MD-Go/
 │                             ECONOMIA.md · GRUPOS.md · CAMBIOS.md · LID.md
 │                             SEGURIDAD.md · UTILIDADES.md · UTILIDADES2.md
 │                             PERFIL.md · JUEGOS.md · STICKERS.md · OPERACION.md
-│                             PANEL.md
+│                             PANEL.md · ARQUITECTURA_ADAPTADOR_WHATSAPP.md
 └── Makefile
 ```
 
@@ -330,6 +330,19 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.21.0** — **adaptador WhatsApp desacoplado + repartidor FIFO por
+  chat**: `cmd/shin`, `cmds` e `internal/bot` dejan de importar tipos,
+  eventos y Protobufs de `whatsmeow` en producción (31 → 13 archivos con
+  dependencia directa, concentrados en `internal/wa` e `internal/ui`; ver
+  [docs/ARQUITECTURA_ADAPTADOR_WHATSAPP.md](docs/ARQUITECTURA_ADAPTADOR_WHATSAPP.md)).
+  La recepción se normaliza en `wa.IncomingMessage` / `wa.GroupChange` con
+  payload crudo privado para medios; los envíos de encuestas/quiz y tarjetas
+  pasan por `wa.PollSpec` y `wa.RichCard`, y `wa.Client` encapsula el
+  cliente subyacente (`Connected`, `AccountName`, `OwnID`). El repartidor
+  pasa a cola acotada **FIFO por conversación** con pool fijo de workers,
+  cupo separado para eventos de grupo (invalidación síncrona de caché +
+  despacho asíncrono) y métricas de espera/duración expuestas en el panel
+  web (`/health`, `/queue`, `/metrics`).
 - **0.20.0** — **la cara, bien (pterm)**: la estética deja de ser ANSI a
   mano y pasa a [pterm](https://pterm.sh), la librería de consola bonita
   por excelencia. Banner `SHIN-MD` en letras grandes (BigText) con

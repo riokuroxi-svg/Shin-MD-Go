@@ -18,7 +18,7 @@ import (
 	"strings"
 	"unicode"
 
-	"go.mau.fi/whatsmeow/types"
+	"shin-go/internal/wa"
 )
 
 // NormalizeNumber deja solo los dígitos del número: "+52 155-1234-5678",
@@ -65,15 +65,15 @@ func NormalizeOwners(in []string) []string {
 // cargó main). Es la misma comprobación que hace el router, expuesta para los
 // comandos que tienen que proteger al dueño (nadie puede expulsarlo ni
 // degradarlo).
-func IsBotOwner(jid types.JID) bool {
+func IsBotOwner(jid wa.JID) bool {
 	r := activeRouter.Load()
 	if r == nil || jid.IsEmpty() {
 		return false
 	}
-	return IsOwner(jid, types.EmptyJID, r.owner)
+	return IsOwner(jid, wa.JID{}, r.owner)
 }
 
-func IsOwner(jid, alt types.JID, owners []string) bool {
+func IsOwner(jid, alt wa.JID, owners []string) bool {
 	if len(owners) == 0 {
 		return false
 	}

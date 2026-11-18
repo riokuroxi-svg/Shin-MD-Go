@@ -33,14 +33,17 @@ const (
 
 // Medio es un archivo descargable de un mensaje.
 type Medio struct {
-	Data     whatsmeow.DownloadableMessage
 	Tipo     TipoMedio
 	Mimetype string
 	Animado  bool
 	Citado   bool // venía en el mensaje citado, no en el que se escribió
+	Segundos uint64
+	Bytes    uint64
+	EsGIF    bool
+	data     whatsmeow.DownloadableMessage
 }
 
-// MedioDe busca un archivo en el mensaje o, si no lo hay, en el citado.
+// MedioDe busca un archivo en un protobuf (uso interno del adaptador y pruebas).
 func MedioDe(msg *waE2E.Message) (Medio, bool) {
 	if msg == nil {
 		return Medio{}, false
@@ -58,6 +61,31 @@ func MedioDe(msg *waE2E.Message) (Medio, bool) {
 	return Medio{}, false
 }
 
+// MedioDeEntrada extrae un medio de la entrada normalizada (directo o citado).
+func MedioDeEntrada(msg *IncomingMessage) (Medio, bool) {
+	if msg == nil || msg.raw == nil {
+		return Medio{}, false
+	}
+	return MedioDe(msg.raw)
+}
+
+// MedioCitado devuelve solo el medio citado, sin confundirlo con uno adjunto al
+// mensaje actual (caso de .setgpbanner).
+func MedioCitado(msg *IncomingMessage) (Medio, bool) {
+	if msg == nil || msg.raw == nil {
+		return Medio{}, false
+	}
+	ci := ContextInfo(Unwrap(msg.raw))
+	if ci == nil || ci.GetQuotedMessage() == nil {
+		return Medio{}, false
+	}
+	m, ok := medioDirecto(Unwrap(ci.GetQuotedMessage()))
+	if ok {
+		m.Citado = true
+	}
+	return m, ok
+}
+
 // medioDirecto mira el mensaje ya desenvuelto.
 func medioDirecto(msg *waE2E.Message) (Medio, bool) {
 	if msg == nil {
@@ -66,21 +94,21 @@ func medioDirecto(msg *waE2E.Message) (Medio, bool) {
 	switch {
 	case msg.GetStickerMessage() != nil:
 		s := msg.GetStickerMessage()
-		return Medio{Data: s, Tipo: MedioSticker, Mimetype: s.GetMimetype(), Animado: s.GetIsAnimated()}, true
+		return Medio{data: s, Tipo: MedioSticker, Mimetype: s.GetMimetype(), Animado: s.GetIsAnimated()}, true
 	case msg.GetImageMessage() != nil:
 		i := msg.GetImageMessage()
-		return Medio{Data: i, Tipo: MedioImagen, Mimetype: i.GetMimetype()}, true
+		return Medio{data: i, Tipo: MedioImagen, Mimetype: i.GetMimetype()}, true
 	case msg.GetVideoMessage() != nil:
 		v := msg.GetVideoMessage()
 		// Un GIF de WhatsApp llega como vídeo con gif_playback: se trata como
 		// animado para que salga sticker en movimiento.
-		return Medio{Data: v, Tipo: MedioVideo, Mimetype: v.GetMimetype(), Animado: v.GetGifPlayback()}, true
+		return Medio{data: v, Tipo: MedioVideo, Mimetype: v.GetMimetype(), Animado: v.GetGifPlayback(), Segundos: uint64(v.GetSeconds()), Bytes: v.GetFileLength(), EsGIF: v.GetGifPlayback()}, true
 	case msg.GetAudioMessage() != nil:
 		a := msg.GetAudioMessage()
-		return Medio{Data: a, Tipo: MedioAudio, Mimetype: a.GetMimetype()}, true
+		return Medio{data: a, Tipo: MedioAudio, Mimetype: a.GetMimetype()}, true
 	case msg.GetDocumentMessage() != nil:
 		d := msg.GetDocumentMessage()
-		return Medio{Data: d, Tipo: MedioDocumento, Mimetype: d.GetMimetype()}, true
+		return Medio{data: d, Tipo: MedioDocumento, Mimetype: d.GetMimetype()}, true
 	}
 	return Medio{}, false
 }

@@ -30,7 +30,7 @@ func init() {
 			// servidor mal, mensaje viejo), se muestra "—" en vez de una
 			// cifra absurda.
 			recv := "—"
-			if ts := c.Event.Info.Timestamp; !ts.IsZero() {
+			if ts := c.Event.Timestamp; !ts.IsZero() {
 				if d := time.Since(ts); d >= 0 && d < 5*time.Minute {
 					recv = fmt.Sprintf("%d ms", d.Milliseconds())
 				}
@@ -42,7 +42,7 @@ func init() {
 				cola += " (modo lento)"
 			}
 
-			active := c.Bot.WA.IsConnected()
+			active := c.Bot.Connected()
 
 			body := fmt.Sprintf(
 				"╭─「 *PING* 」\n│ Proceso: vivo (%s)\n│ Conexión: %s\n│ Recepción: %s\n│ Handler: %d ms\n│ Cola: %s\n╰─ Shin-MD Go",

@@ -30,10 +30,9 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/store"
+	"shin-go/internal/wa"
 )
 
 // ─── ayudas de las salidas ──────────────────────────────────────────────────
@@ -754,7 +753,7 @@ func registerSteal() {
 }
 
 // nombreDe: nombre visible de una persona (push name si es quien escribe).
-func nombreDe(c *bot.Context, j types.JID) string {
+func nombreDe(c *bot.Context, j wa.JID) string {
 	if c.Sender.ToNonAD() == j.ToNonAD() && c.PushName != "" {
 		return c.PushName
 	}

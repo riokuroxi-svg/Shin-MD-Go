@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/ui"
 	"shin-go/internal/wa"
@@ -133,25 +131,22 @@ func init() {
 			// foto viene en ImageMessage, si es un audio en AudioMessage… Mirar
 			// solo ExtendedTextMessage hacía que .pin dijera "no respondiste a
 			// nada" con fotos, vídeos, audios y stickers.
-			ctxInfo := wa.ContextInfo(c.Event.Message)
-			if ctxInfo == nil || ctxInfo.GetStanzaID() == "" {
+			if c.Event == nil || c.Event.Quoted == nil || c.Event.Quoted.ID == "" {
 				return c.Reply("Responde a un mensaje con .pin para fijarlo.")
 			}
 
-			// El autor del mensaje citado puede ser otro: se saca del propio
-			// ContextInfo (y solo tiene sentido en grupos).
-			var participant types.JID
+			// El adaptador ya resolvió el participante de la cita. En chats
+			// privados WhatsApp no requiere el campo participant.
+			var participant wa.JID
 			if c.IsGroup {
 				participant = c.Sender
-				if raw := ctxInfo.GetParticipant(); raw != "" {
-					if jid, err := types.ParseJID(raw); err == nil {
-						participant = jid.ToNonAD()
-					}
+				if !c.Event.Quoted.Participant.IsEmpty() {
+					participant = c.Event.Quoted.Participant
 				}
 			}
-
-			key := ui.Key(c.Chat, false, ctxInfo.GetStanzaID(), participant)
-			return c.Bot.PinMessage(c.Ctx, c.Chat, key, true)
+			return c.Bot.PinMessage(c.Ctx, c.Chat, wa.MessageKey{
+				Chat: c.Chat, Sender: participant, ID: c.Event.Quoted.ID,
+			}, true)
 		},
 	})
 
@@ -165,11 +160,12 @@ func init() {
 		Desc:     "Prueba de respuesta enriquecida (markdown/tabla) · experimental",
 		Run: func(c *bot.Context) error {
 			fallback := "**SHIN-MD** — si ves esto en texto plano, tu teléfono no pintó la respuesta enriquecida."
-			msg := ui.RichTextCard(
-				"# Shin-MD\nPrueba de *respuesta enriquecida*:\n- markdown\n- bloques de código\n- tablas",
-				"go", "func main() {\n\tfmt.Println(\"shin\")\n}",
-			)
-			return c.Bot.SendRich(c.Ctx, c.Chat, msg, fallback, c.Priority())
+			card := wa.RichCard{
+				Text:     "# Shin-MD\nPrueba de *respuesta enriquecida*:\n- markdown\n- bloques de código\n- tablas",
+				Language: "go",
+				Code:     "func main() {\n\tfmt.Println(\"shin\")\n}",
+			}
+			return c.Bot.SendRichCard(c.Ctx, c.Chat, card, fallback, c.Priority())
 		},
 	})
 }

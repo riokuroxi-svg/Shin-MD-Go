@@ -422,11 +422,11 @@ func partirAt(s, fallback string) (string, string) {
 
 // medioStickerCitado: el webp del mensaje citado si era un sticker.
 func medioStickerCitado(c *bot.Context) ([]byte, bool) {
-	medio, ok := wa.MedioDe(c.Event.Message)
+	medio, ok := wa.MedioDeEntrada(c.Event)
 	if !ok || medio.Tipo != wa.MedioSticker {
 		return nil, false
 	}
-	datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+	datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 	if err != nil || len(datos) == 0 || len(datos) > store.MaxStickerBytes {
 		return nil, false
 	}

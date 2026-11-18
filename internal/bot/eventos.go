@@ -18,14 +18,13 @@ import (
 	"runtime/debug"
 	"sync"
 
-	"go.mau.fi/whatsmeow/types/events"
-
 	"shin-go/internal/store"
+	"shin-go/internal/wa"
 	"shin-go/internal/xlog"
 )
 
 // GroupEvent es un oyente de cambios de grupo.
-type GroupEvent func(ctx context.Context, db *store.Store, log *xlog.Logger, evt *events.GroupInfo)
+type GroupEvent func(ctx context.Context, db *store.Store, log *xlog.Logger, evt *wa.GroupChange)
 
 type registeredGroupEvent struct {
 	name string
@@ -57,15 +56,29 @@ func ResetGroupEvents() {
 // HandleGroupInfo atiende un cambio de grupo: primero tira la caché (siempre,
 // pase lo que pase después) y luego avisa a los oyentes. Un oyente roto no
 // puede impedir que los demás se enteren.
-func HandleGroupInfo(ctx context.Context, db *store.Store, log *xlog.Logger, evt *events.GroupInfo) {
+func HandleGroupInfo(ctx context.Context, db *store.Store, log *xlog.Logger, evt *wa.GroupChange) {
+	InvalidateGroupInfo(evt)
+	DispatchGroupInfo(ctx, db, log, evt)
+}
+
+// InvalidateGroupInfo es deliberadamente síncrona y breve: evita consultar
+// permisos con datos viejos mientras el trabajo lento de oyentes espera turno.
+func InvalidateGroupInfo(evt *wa.GroupChange) {
+	if evt == nil || evt.JID.IsEmpty() {
+		return
+	}
+	if r := activeRouter.Load(); r != nil {
+		r.Groups().Invalidate(evt.JID)
+	}
+}
+
+// DispatchGroupInfo ejecuta los oyentes. Normalmente se llama desde el
+// dispatcher acotado; HandleGroupInfo conserva el comportamiento síncrono
+// anterior para consumidores que lo invoquen directamente.
+func DispatchGroupInfo(ctx context.Context, db *store.Store, log *xlog.Logger, evt *wa.GroupChange) {
 	if evt == nil {
 		return
 	}
-
-	if r := activeRouter.Load(); r != nil && !evt.JID.IsEmpty() {
-		r.Groups().Invalidate(evt.JID)
-	}
-
 	groupEventsMu.RLock()
 	chain := make([]registeredGroupEvent, len(groupEvents))
 	copy(chain, groupEvents)
@@ -76,7 +89,7 @@ func HandleGroupInfo(ctx context.Context, db *store.Store, log *xlog.Logger, evt
 	}
 }
 
-func runGroupEvent(g registeredGroupEvent, ctx context.Context, db *store.Store, log *xlog.Logger, evt *events.GroupInfo) {
+func runGroupEvent(g registeredGroupEvent, ctx context.Context, db *store.Store, log *xlog.Logger, evt *wa.GroupChange) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			if log != nil {

@@ -19,10 +19,9 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/store"
+	"shin-go/internal/wa"
 )
 
 func init() {
@@ -59,7 +58,7 @@ func mustBotBeAdmin(c *bot.Context) (bool, error) {
 
 // protected dice si alguien no se puede tocar: el creador del grupo, un admin,
 // el dueño del bot o el propio bot.
-func protected(c *bot.Context, evt *types.GroupInfo, who types.JID) (string, bool) {
+func protected(c *bot.Context, evt *wa.GroupInfo, who wa.JID) (string, bool) {
 	if evt == nil {
 		// Sin info del grupo no se puede comprobar nada: se protege por
 		// defecto en vez de expulsar a ciegas.
@@ -68,7 +67,7 @@ func protected(c *bot.Context, evt *types.GroupInfo, who types.JID) (string, boo
 	if !evt.OwnerJID.IsEmpty() && sameUser(evt.OwnerJID, who) {
 		return "es el creador del grupo", true
 	}
-	if c.Bot.WA.Store.ID != nil && sameUser(*c.Bot.WA.Store.ID, who) {
+	if own := c.Bot.OwnID(); !own.IsEmpty() && sameUser(own, who) {
 		return "soy yo", true
 	}
 	if bot.IsBotOwner(who) {
@@ -86,7 +85,7 @@ func protected(c *bot.Context, evt *types.GroupInfo, who types.JID) (string, boo
 
 // sameUser compara dos JID por el número/LID, que es lo único estable cuando
 // uno viene como teléfono y el otro como LID.
-func sameUser(a, b types.JID) bool {
+func sameUser(a, b wa.JID) bool {
 	if a.IsEmpty() || b.IsEmpty() {
 		return false
 	}
@@ -106,21 +105,21 @@ func tail(s string, n int) string {
 }
 
 // resolveTarget: a quién va el comando (mención o cita).
-func resolveTarget(c *bot.Context) (types.JID, bool) {
+func resolveTarget(c *bot.Context) (wa.JID, bool) {
 	if j, ok := target(c); ok {
 		return j, true
 	}
-	return types.EmptyJID, false
+	return wa.JID{}, false
 }
 
 // resolveTargetWithParticipants: como resolveTarget, pero además devuelve el
 // participante real del grupo (con su teléfono si se conoce). Es lo que
 // necesita WhatsApp para ascender o expulsar: si le pasas un LID cuando el
 // grupo usa teléfono, rechaza la operación.
-func resolveTargetWithParticipants(c *bot.Context, evt *types.GroupInfo) (types.JID, bool) {
+func resolveTargetWithParticipants(c *bot.Context, evt *wa.GroupInfo) (wa.JID, bool) {
 	who, ok := resolveTarget(c)
 	if !ok {
-		return types.EmptyJID, false
+		return wa.JID{}, false
 	}
 	if evt == nil {
 		return who, true // sin info del grupo se usa el JID tal cual
@@ -194,7 +193,7 @@ func registerWarns() {
 					msg += "\n\n> ❖ Alcanzó el límite de advertencias y fue expulsado del grupo."
 				}
 			}
-			return c.Bot.SendMentions(c.Ctx, c.Chat, msg, []types.JID{who}, c.CmdPriority)
+			return c.Bot.SendMentions(c.Ctx, c.Chat, msg, []wa.JID{who}, c.CmdPriority)
 		},
 	})
 
@@ -221,7 +220,7 @@ func registerWarns() {
 			if len(warns) == 0 {
 				return c.Bot.SendMentions(c.Ctx, c.Chat,
 					fmt.Sprintf("《✧》 @%s no tiene advertencias registradas.", who.User),
-					[]types.JID{who}, c.CmdPriority)
+					[]wa.JID{who}, c.CmdPriority)
 			}
 
 			var b strings.Builder
@@ -233,7 +232,7 @@ func registerWarns() {
 				}
 				b.WriteString("\n")
 			}
-			return c.Bot.SendMentions(c.Ctx, c.Chat, b.String(), []types.JID{who}, c.CmdPriority)
+			return c.Bot.SendMentions(c.Ctx, c.Chat, b.String(), []wa.JID{who}, c.CmdPriority)
 		},
 	})
 
@@ -268,7 +267,7 @@ func registerWarns() {
 				}
 				return c.Bot.SendMentions(c.Ctx, c.Chat,
 					fmt.Sprintf("✐ Se borraron *%d* advertencias de @%s.", n, who.User),
-					[]types.JID{who}, c.CmdPriority)
+					[]wa.JID{who}, c.CmdPriority)
 			}
 
 			idx := 0
@@ -284,7 +283,7 @@ func registerWarns() {
 			}
 			return c.Bot.SendMentions(c.Ctx, c.Chat,
 				fmt.Sprintf("ꕥ Se borró la advertencia #%d de @%s. Quedan *%d*.", idx, who.User, restantes),
-				[]types.JID{who}, c.CmdPriority)
+				[]wa.JID{who}, c.CmdPriority)
 		},
 	})
 
@@ -373,7 +372,7 @@ func registerKick() {
 			}
 			c.Groups.Invalidate(c.Chat)
 			return c.Bot.SendMentions(c.Ctx, c.Chat,
-				fmt.Sprintf("✿ @%s fue expulsado del grupo.", who.User), []types.JID{who}, c.CmdPriority)
+				fmt.Sprintf("✿ @%s fue expulsado del grupo.", who.User), []wa.JID{who}, c.CmdPriority)
 		},
 	})
 }
@@ -381,7 +380,7 @@ func registerKick() {
 // listarLote responde con la lista de gente a la que afectaría un kick masivo,
 // sin tocar a nadie. Es lo que el JS hacía directamente con `groupParticipants
 // Update: remove` en bucle (3 s por persona, decenas de expulsiones).
-func listarLote(c *bot.Context, info *types.GroupInfo, modo string) error {
+func listarLote(c *bot.Context, info *wa.GroupInfo, modo string) error {
 	var prefijo string
 	if modo == "num" || modo == "listnum" {
 		prefijo = strings.TrimPrefix(strings.TrimSpace(argAt(c.Args, 1)), "+")
@@ -391,7 +390,7 @@ func listarLote(c *bot.Context, info *types.GroupInfo, modo string) error {
 		}
 	}
 
-	var candidatos []types.JID
+	var candidatos []wa.JID
 	for _, p := range info.Participants {
 		if p.IsAdmin || p.IsSuperAdmin {
 			continue
@@ -502,11 +501,11 @@ func cambiarRol(c *bot.Context, ascender bool) error {
 
 	if ascender && esAdmin {
 		return c.Bot.SendMentions(c.Ctx, c.Chat,
-			fmt.Sprintf("《✧》 @%s ya es administrador del grupo.", who.User), []types.JID{who}, c.CmdPriority)
+			fmt.Sprintf("《✧》 @%s ya es administrador del grupo.", who.User), []wa.JID{who}, c.CmdPriority)
 	}
 	if !ascender && !esAdmin {
 		return c.Bot.SendMentions(c.Ctx, c.Chat,
-			fmt.Sprintf("《✧》 @%s no es administrador del grupo.", who.User), []types.JID{who}, c.CmdPriority)
+			fmt.Sprintf("《✧》 @%s no es administrador del grupo.", who.User), []wa.JID{who}, c.CmdPriority)
 	}
 
 	if !ascender {
@@ -532,7 +531,7 @@ func cambiarRol(c *bot.Context, ascender bool) error {
 	if !ascender {
 		texto = fmt.Sprintf("✿ @%s ya no es administrador del grupo.", who.User)
 	}
-	return c.Bot.SendMentions(c.Ctx, c.Chat, texto, []types.JID{who}, c.CmdPriority)
+	return c.Bot.SendMentions(c.Ctx, c.Chat, texto, []wa.JID{who}, c.CmdPriority)
 }
 
 // ─── abrir, cerrar, enlace, datos del grupo ─────────────────────────────────
@@ -679,8 +678,8 @@ func registerGroupSettings() {
 			}
 			// La imagen tiene que venir citada: así no hay que descargar nada
 			// que no haya pedido un admin.
-			citado := quotedImage(c)
-			if citado == nil {
+			citado, ok := quotedImage(c)
+			if !ok {
 				return c.Reply("《✧》 Responde a una *imagen* para ponerla como foto del grupo.")
 			}
 			data, err := c.Bot.DownloadMedia(c.Ctx, citado)
@@ -736,7 +735,7 @@ func registerTagAll() {
 					texto = "📢 Atención a todos."
 				}
 
-				var mencionados []types.JID
+				var mencionados []wa.JID
 				for _, p := range info.Participants {
 					j := p.JID
 					if !p.PhoneNumber.IsEmpty() {
@@ -787,7 +786,7 @@ func registerTagAll() {
 			if texto == "" {
 				texto = "📢 Atención a todos."
 			}
-			var mencionados []types.JID
+			var mencionados []wa.JID
 			for _, p := range info.Participants {
 				j := p.PhoneNumber
 				if j.IsEmpty() {
@@ -876,7 +875,7 @@ func registerActivity() {
 			}
 			return c.Bot.SendMentions(c.Ctx, c.Chat, fmt.Sprintf(
 				"✿ @%s\n> ⌦ Mensajes totales: *%s*\n> ⌦ Últimas 24 h: *%s*",
-				who.User, miles(total), miles(hoy)), []types.JID{who}, c.CmdPriority)
+				who.User, miles(total), miles(hoy)), []wa.JID{who}, c.CmdPriority)
 		},
 	})
 
@@ -897,10 +896,10 @@ func registerActivity() {
 			}
 			var b strings.Builder
 			b.WriteString("✿ Top de mensajes (últimos 30 días)\n\n")
-			var menciones []types.JID
+			var menciones []wa.JID
 			for i, f := range filas {
 				fmt.Fprintf(&b, "✩ %d › @%s · *%s*\n", i+1, strings.SplitN(f.UserID, "@", 2)[0], miles(f.Msgs))
-				if j, err := types.ParseJID(f.UserID); err == nil {
+				if j, err := wa.ParseJID(f.UserID); err == nil {
 					menciones = append(menciones, j)
 				}
 			}
@@ -925,7 +924,7 @@ func registerActivity() {
 				return err
 			}
 
-			var inactivos []types.JID
+			var inactivos []wa.JID
 			for _, p := range info.Participants {
 				j := p.PhoneNumber
 				if j.IsEmpty() {

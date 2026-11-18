@@ -23,10 +23,9 @@ import (
 	"sync"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/store"
+	"shin-go/internal/wa"
 	"shin-go/internal/xp"
 )
 
@@ -58,11 +57,11 @@ func objetivo(c *bot.Context) string {
 // claveDe traduce un JID a la llave de la base (teléfono si se conoce, LID si
 // no). Sin esto, mencionar a alguien por LID crearía una cuenta distinta de la
 // suya de siempre.
-func claveDe(c *bot.Context, jid types.JID) string {
+func claveDe(c *bot.Context, jid wa.JID) string {
 	if jid.IsEmpty() {
 		return ""
 	}
-	if jid.Server == types.DefaultUserServer {
+	if jid.Server == wa.DefaultUserServer {
 		return jid.ToNonAD().String()
 	}
 	if pn, err := c.DB.PNForLID(c.Ctx, jid.String()); err == nil && pn != "" {

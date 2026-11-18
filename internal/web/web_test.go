@@ -17,9 +17,14 @@ import (
 
 func estadoPrueba() Estado {
 	return Estado{
-		Conectado: true, Version: "0.14.0", Arranque: time.Now().Add(-2 * time.Minute),
-		SentToday: 7, Budget: 120, Workers: 4, ColaMax: 128, EnCola: 2,
-		Recibidos: 50, Procesados: 48, Descartados: 0, Anchor: time.Now().Add(-3 * time.Hour),
+		Conectado: true, Version: "0.21.0", Arranque: time.Now().Add(-2 * time.Minute),
+		SentToday: 7, Budget: 120, Workers: 4, ColaMax: 128, EnCola: 2, Activos: 1,
+		Recibidos: 50, Procesados: 48, Descartados: 0,
+		GrupoEnCola: 1, GrupoColaMax: 128, GrupoActivos: 1,
+		GruposRecibidos: 12, GruposProcesados: 11, GruposDescartados: 0,
+		EsperaPromedioMS: 4, EsperaMaximaMS: 19,
+		TrabajoPromedioMS: 22, TrabajoMaximoMS: 180,
+		Anchor: time.Now().Add(-3 * time.Hour),
 	}
 }
 
@@ -33,6 +38,7 @@ func servidor(t *testing.T, cfg Config) (*Server, string) {
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/queue", s.queue)
 	mux.HandleFunc("/memoria", s.memoria)
+	mux.HandleFunc("/metrics", s.metrics)
 	ts := httptest.NewServer(s.conter(s.middleware(mux)))
 	t.Cleanup(ts.Close)
 	return s, ts.URL
@@ -85,7 +91,7 @@ func TestEndpoints(t *testing.T) {
 	_, base := servidor(t, Config{Publico: false})
 
 	inicio := cogerJSON(t, base+"/")
-	if inicio["fingerprint"] != "shin-gauss-0.25-1200ms" || inicio["version"] != "0.14.0" || inicio["engine"] != "conectado" {
+	if inicio["fingerprint"] != "shin-gauss-0.25-1200ms" || inicio["version"] != "0.21.0" || inicio["engine"] != "conectado" {
 		t.Fatalf("/ raro: %v", inicio)
 	}
 	if _, ok := inicio["ts"].(string); !ok {
@@ -100,7 +106,10 @@ func TestEndpoints(t *testing.T) {
 	if cola["sentToday"] != float64(7) || cola["budget"] != float64(120) || cola["pendientes"] != float64(2) {
 		t.Fatalf("/health queue: %v", cola)
 	}
-	if d := health["dispatcher"].(map[string]any); d["workers"] != float64(4) || d["pending"] != float64(2) {
+	d := health["dispatcher"].(map[string]any)
+	if d["workers"] != float64(4) || d["pending"] != float64(2) || d["activos"] != float64(1) ||
+		d["grupoPending"] != float64(1) || d["grupoCap"] != float64(128) ||
+		d["esperaPromedioMS"] != float64(4) || d["trabajoMaximoMS"] != float64(180) {
 		t.Fatalf("/health dispatcher: %v", d)
 	}
 
@@ -108,10 +117,18 @@ func TestEndpoints(t *testing.T) {
 	if q["antiban"].(map[string]any)["gauss"] != "μ=0.25 · techo 1200 ms" {
 		t.Fatalf("/queue antiban: %v", q)
 	}
+	if q["gruposProcesados"] != float64(11) || q["esperaMaximaMS"] != float64(19) || q["trabajoPromedioMS"] != float64(22) {
+		t.Fatalf("/queue dispatcher: %v", q)
+	}
 
 	mem := cogerJSON(t, base+"/memoria")
 	if mem["goroutines"].(float64) < 1 {
 		t.Fatalf("/memoria raro: %v", mem)
+	}
+
+	met := cogerJSON(t, base+"/metrics")
+	if met["state"] != "conectado" || met["grupoPend"] != float64(1) || met["trabajoMaximoMS"] != float64(180) {
+		t.Fatalf("/metrics raro: %v", met)
 	}
 
 	// Ruta no montada: 404, no el panel.

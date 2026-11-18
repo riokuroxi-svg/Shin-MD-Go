@@ -25,8 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/proto/waE2E"
-
 	"shin-go/internal/apis"
 	"shin-go/internal/bot"
 	"shin-go/internal/media"
@@ -484,11 +482,11 @@ func registerHD() {
 		Desc:     "Mejorar la nitidez de una imagen (local, 2× + enfoque)",
 		Cooldown: 15,
 		Run: func(c *bot.Context) error {
-			medio, ok := wa.MedioDe(c.Event.Message)
+			medio, ok := wa.MedioDeEntrada(c.Event)
 			if !ok || medio.Tipo != wa.MedioImagen {
 				return c.Reply(fmt.Sprintf("《✧》 Responde a una *imagen* con:\n> %shd\n_La mejora es local: la foto no sale del servidor._", c.Bot.FirstPrefix()))
 			}
-			datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+			datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 			if err != nil || len(datos) == 0 {
 				return c.Reply("《✧》 No se pudo descargar la imagen.")
 			}
@@ -589,18 +587,13 @@ func registerPTV() {
 		Desc:     "Convertir un vídeo (≤60 s) en vídeo redondo",
 		Cooldown: 15,
 		Run: func(c *bot.Context) error {
-			medio, ok := wa.MedioDe(c.Event.Message)
+			medio, ok := wa.MedioDeEntrada(c.Event)
 			if !ok || medio.Tipo != wa.MedioVideo {
 				return c.Reply("《✧》 Responde a un *vídeo* con " + c.Bot.FirstPrefix() +
 					"ptv para convertirlo en redondo.\n> Tiene que durar menos de 60 segundos.")
 			}
-			video, esVideo := medio.Data.(*waE2E.VideoMessage)
-			var segundos, bytes uint64
-			if esVideo {
-				segundos = uint64(video.GetSeconds())
-				bytes = video.GetFileLength()
-			}
-			si, motivo := puedeSerPTV(segundos, bytes, esVideo && video.GetGifPlayback())
+			segundos, bytes := medio.Segundos, medio.Bytes
+			si, motivo := puedeSerPTV(segundos, bytes, medio.EsGIF)
 			if !si {
 				switch motivo {
 				case "largo":
@@ -611,7 +604,7 @@ func registerPTV() {
 					return c.Reply("《✧》 Los GIF no valen para vídeo redondo (usa " + c.Bot.FirstPrefix() + "sticker para eso).")
 				}
 			}
-			datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+			datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 			if err != nil || len(datos) == 0 {
 				return c.Reply("《✧》 No pude descargar el vídeo.")
 			}
@@ -630,14 +623,14 @@ func registerTourl() {
 		Desc:     "Subir un archivo y devolver su enlace temporal",
 		Cooldown: 10,
 		Run: func(c *bot.Context) error {
-			medio, ok := wa.MedioDe(c.Event.Message)
+			medio, ok := wa.MedioDeEntrada(c.Event)
 			if !ok {
 				return c.Reply(fmt.Sprintf("《✧》 Responde a una *imagen, vídeo, audio o documento* con %stourl\n> El enlace caduca solo (24–72 h): no queda basura permanente.",
 					c.Bot.FirstPrefix()))
 			}
 			ctx, cancel := context.WithTimeout(c.Ctx, 90*time.Second)
 			defer cancel()
-			datos, err := c.Bot.DownloadMedia(ctx, medio.Data)
+			datos, err := c.Bot.DownloadMedia(ctx, medio)
 			if err != nil || len(datos) == 0 {
 				return c.Reply("《✧》 No pude descargar el archivo de WhatsApp.")
 			}
@@ -716,8 +709,8 @@ func registerAI() {
 
 			// Como en el JS: una imagen citada entra como contexto visual.
 			var imgB64, imgMime string
-			if medio, ok := wa.MedioDe(c.Event.Message); ok && medio.Tipo == wa.MedioImagen {
-				if datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data); err == nil && len(datos) < 4<<20 {
+			if medio, ok := wa.MedioDeEntrada(c.Event); ok && medio.Tipo == wa.MedioImagen {
+				if datos, err := c.Bot.DownloadMedia(c.Ctx, medio); err == nil && len(datos) < 4<<20 {
 					imgB64 = base64.StdEncoding.EncodeToString(datos)
 					imgMime = medio.Mimetype
 				}

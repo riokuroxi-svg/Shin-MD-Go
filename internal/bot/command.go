@@ -11,9 +11,6 @@ import (
 	"sort"
 	"strings"
 
-	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
-
 	"shin-go/internal/store"
 	"shin-go/internal/ui"
 	"shin-go/internal/wa"
@@ -42,15 +39,25 @@ const (
 
 // Context es lo que recibe un handler: equivale al objeto ctx/m del JS
 // (msg, args, sock, isGroup, isOwner, reply…) pero tipado.
+// Messenger es el contrato mínimo de respuestas que usa el núcleo. La
+// implementación WhatsApp traduce estos valores a botones/protobuf y gestiona
+// los fallbacks; los comandos no construyen payloads externos.
+type Messenger interface {
+	SendText(context.Context, wa.JID, string, bool) error
+	SendButtons(context.Context, wa.JID, string, string, string, bool, ...Button) error
+	SendButtonsImage(context.Context, wa.JID, []byte, string, string, string, bool, ...Button) error
+}
+
 type Context struct {
 	Ctx      context.Context
 	Bot      *wa.Client
+	Outbox   Messenger
 	Log      *xlog.Logger
-	Event    *events.Message
+	Event    *wa.IncomingMessage
 	DB       *store.Store
 	Groups   *GroupCache
-	Chat     types.JID
-	Sender   types.JID
+	Chat     wa.JID
+	Sender   wa.JID
 	IsGroup  bool
 	IsOwner  bool
 	PushName string
@@ -60,7 +67,7 @@ type Context struct {
 	// teléfono si se conoce) y `SenderAlt` el otro JID, si vino.
 	Identity  wa.Identity
 	SenderKey string
-	SenderAlt types.JID
+	SenderAlt wa.JID
 
 	Command string
 	Args    []string
@@ -107,46 +114,38 @@ func (c *Context) BotAdmin() bool {
 
 // Mentioned devuelve los JID mencionados en el mensaje (@número o respuesta a
 // alguien). Los usa el afk y los comandos de admin.
-func (c *Context) Mentioned() []types.JID {
-	msg := wa.Unwrap(c.Event.Message)
-	if msg == nil {
+func (c *Context) Mentioned() []wa.JID {
+	if c.Event == nil || len(c.Event.Mentions) == 0 {
 		return nil
 	}
-
-	var out []types.JID
-	if ci := wa.ContextInfo(msg); ci != nil {
-		for _, raw := range ci.GetMentionedJID() {
-			if jid, err := types.ParseJID(raw); err == nil {
-				out = append(out, jid.ToNonAD())
-			}
-		}
-		if p := ci.GetParticipant(); p != "" {
-			if jid, err := types.ParseJID(p); err == nil {
-				out = append(out, jid.ToNonAD())
-			}
-		}
-	}
-	return out
+	return append([]wa.JID(nil), c.Event.Mentions...)
 }
 
 // Reply contesta en el mismo chat (pasando por la cola).
 func (c *Context) Reply(text string) error {
-	return c.Bot.SendText(c.Ctx, c.Chat, text, c.CmdPriority)
+	return c.outbox().SendText(c.Ctx, c.Chat, text, c.CmdPriority)
+}
+
+func (c *Context) outbox() Messenger {
+	if c.Outbox != nil {
+		return c.Outbox
+	}
+	return c.Bot
 }
 
 // ReplyPriority contesta saltando el cupo de calentamiento (.menu, .ping…).
 func (c *Context) ReplyPriority(text string) error {
-	return c.Bot.SendText(c.Ctx, c.Chat, text, true)
+	return c.outbox().SendText(c.Ctx, c.Chat, text, true)
 }
 
 // ReplyButtons contesta con tarjeta y botones nativos.
 func (c *Context) ReplyButtons(title, body, footer string, buttons ...Button) error {
-	return c.Bot.SendButtons(c.Ctx, c.Chat, title, body, footer, c.CmdPriority, buttons...)
+	return c.outbox().SendButtons(c.Ctx, c.Chat, title, body, footer, c.CmdPriority, buttons...)
 }
 
 // ReplyImage contesta con una tarjeta que lleva imagen de cabecera.
 func (c *Context) ReplyImage(image []byte, title, body, footer string, buttons ...Button) error {
-	return c.Bot.SendButtonsImage(c.Ctx, c.Chat, image, title, body, footer, c.CmdPriority, buttons...)
+	return c.outbox().SendButtonsImage(c.Ctx, c.Chat, image, title, body, footer, c.CmdPriority, buttons...)
 }
 
 // Button es alias para no obligar a importar internal/ui en cada comando.

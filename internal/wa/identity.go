@@ -37,8 +37,8 @@ var errNoMapping = errors.New("sin mapeo LID↔teléfono")
 
 // Identity es la misma persona vista por los dos lados.
 type Identity struct {
-	PN  types.JID // teléfono (puede estar vacío si aún no se conoce)
-	LID types.JID // identificador interno (puede estar vacío)
+	PN  JID // teléfono (puede estar vacío si aún no se conoce)
+	LID JID // identificador interno (puede estar vacío)
 
 	// Key es la llave estable para la base de datos: el teléfono si se conoce,
 	// si no el LID. Nunca vacía cuando hay JID de entrada.
@@ -50,43 +50,61 @@ func (i Identity) Known() bool { return !i.PN.IsEmpty() && i.Key == i.PN.String(
 
 // Resolver traduce JID ↔ identidad. Es seguro para usar desde varias
 // goroutines y guarda una caché pequeña en memoria.
+type identityNative struct {
+	PN  types.JID
+	LID types.JID
+	Key string
+}
+
+func identityFromNative(id identityNative) Identity {
+	return Identity{PN: jidFromWhatsmeow(id.PN), LID: jidFromWhatsmeow(id.LID), Key: id.Key}
+}
+
+func (id Identity) native() identityNative {
+	return identityNative{PN: id.PN.whatsmeow(), LID: id.LID.whatsmeow(), Key: id.Key}
+}
+
 type Resolver struct {
 	store IdentityStore
 	log   *xlog.Logger
 
 	mu    sync.RWMutex
-	cache map[string]Identity // jid completo → identidad
+	cache map[string]identityNative // jid completo → identidad
 }
 
 const resolverCacheMax = 2048
 
 // NewResolver construye el resolver sobre la base del bot.
 func NewResolver(mem IdentityStore, log *xlog.Logger) *Resolver {
-	return &Resolver{store: mem, log: log, cache: make(map[string]Identity, resolverCacheMax)}
+	return &Resolver{store: mem, log: log, cache: make(map[string]identityNative, resolverCacheMax)}
 }
 
 // IsLID dice si el JID es un identificador interno de WhatsApp.
-func IsLID(jid types.JID) bool {
-	return jid.Server == types.HiddenUserServer || jid.Server == types.HostedLIDServer
+func IsLID(jid JID) bool {
+	return jid.Server == HiddenUserServer || jid.Server == HostedLIDServer
 }
 
 // Resolve devuelve la identidad de un remitente. `alt` es el JID alternativo
 // que manda WhatsApp (Info.SenderAlt / ChatAlt) y puede venir vacío.
-func (r *Resolver) Resolve(ctx context.Context, jid, alt types.JID) Identity {
+func (r *Resolver) Resolve(ctx context.Context, jid, alt JID) Identity {
+	return identityFromNative(r.resolve(ctx, jid.whatsmeow(), alt.whatsmeow()))
+}
+
+func (r *Resolver) resolve(ctx context.Context, jid, alt types.JID) identityNative {
 	jid = jid.ToNonAD()
 	alt = alt.ToNonAD()
 
 	if jid.IsEmpty() {
-		return Identity{}
+		return identityNative{}
 	}
 
 	if id, ok := r.fromCache(jid, alt); ok {
 		return id
 	}
 
-	var id Identity
+	var id identityNative
 	switch {
-	case IsLID(jid):
+	case isLIDWhatsmeow(jid):
 		id.LID = jid
 		// El alternativo del propio mensaje es la fuente más barata y fiable.
 		if isPN(alt) {
@@ -96,7 +114,7 @@ func (r *Resolver) Resolve(ctx context.Context, jid, alt types.JID) Identity {
 		}
 	default:
 		id.PN = jid
-		if IsLID(alt) {
+		if isLIDWhatsmeow(alt) {
 			id.LID = alt
 		} else {
 			id.LID = r.lidForPN(ctx, jid)
@@ -110,30 +128,30 @@ func (r *Resolver) Resolve(ctx context.Context, jid, alt types.JID) Identity {
 }
 
 // PNFor devuelve el teléfono de un LID (vacío si no se conoce).
-func (r *Resolver) PNFor(ctx context.Context, lid types.JID) types.JID {
+func (r *Resolver) PNFor(ctx context.Context, lid JID) JID {
 	if !IsLID(lid.ToNonAD()) {
 		return lid.ToNonAD()
 	}
-	return r.Resolve(ctx, lid, types.EmptyJID).PN
+	return r.Resolve(ctx, lid, JID{}).PN
 }
 
 // LIDFor devuelve el LID de un teléfono (vacío si la red no lo da).
-func (r *Resolver) LIDFor(ctx context.Context, pn types.JID) types.JID {
+func (r *Resolver) LIDFor(ctx context.Context, pn JID) JID {
 	if IsLID(pn.ToNonAD()) {
 		return pn.ToNonAD()
 	}
-	return r.Resolve(ctx, pn, types.EmptyJID).LID
+	return r.Resolve(ctx, pn, JID{}).LID
 }
 
 // Key devuelve la llave estable de un JID sin resolverlo (lo que ya se sabe).
-func (r *Resolver) Key(ctx context.Context, jid types.JID) string {
-	return r.Resolve(ctx, jid, types.EmptyJID).Key
+func (r *Resolver) Key(ctx context.Context, jid JID) string {
+	return r.Resolve(ctx, jid, JID{}).Key
 }
 
 // SamePerson compara dos remitentes por sus dos JID. Sirve para comprobar si
 // el que escribe es el mismo de una lista de participantes del grupo, aunque
 // uno venga por LID y el otro por teléfono.
-func (r *Resolver) SamePerson(ctx context.Context, a, aAlt, b, bAlt types.JID) bool {
+func (r *Resolver) SamePerson(ctx context.Context, a, aAlt, b, bAlt JID) bool {
 	ia := r.Resolve(ctx, a, aAlt)
 	ib := r.Resolve(ctx, b, bAlt)
 
@@ -191,7 +209,7 @@ func (r *Resolver) lidForPN(ctx context.Context, pn types.JID) types.JID {
 
 // learn guarda la pareja en cuanto se conocen los dos lados. Es lo que hace
 // que la siguiente vez no haya que preguntar nada.
-func (r *Resolver) learn(ctx context.Context, id Identity) {
+func (r *Resolver) learn(ctx context.Context, id identityNative) {
 	if r.store == nil || id.PN.IsEmpty() || id.LID.IsEmpty() {
 		return
 	}
@@ -202,7 +220,7 @@ func (r *Resolver) learn(ctx context.Context, id Identity) {
 
 // ─── caché ──────────────────────────────────────────────────────────────────
 
-func (r *Resolver) fromCache(jid, alt types.JID) (Identity, bool) {
+func (r *Resolver) fromCache(jid, alt types.JID) (identityNative, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -218,14 +236,14 @@ func (r *Resolver) fromCache(jid, alt types.JID) (Identity, bool) {
 			return id, true
 		}
 	}
-	return Identity{}, false
+	return identityNative{}, false
 }
 
-func (r *Resolver) remember(jid, alt types.JID, id Identity) {
+func (r *Resolver) remember(jid, alt types.JID, id identityNative) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if len(r.cache) >= resolverCacheMax {
-		r.cache = make(map[string]Identity, resolverCacheMax)
+		r.cache = make(map[string]identityNative, resolverCacheMax)
 	}
 	r.cache[jid.String()] = id
 	if !alt.IsEmpty() {
@@ -241,12 +259,16 @@ func (r *Resolver) remember(jid, alt types.JID, id Identity) {
 
 // ─── utilidades ─────────────────────────────────────────────────────────────
 
+func isLIDWhatsmeow(jid types.JID) bool {
+	return jid.Server == types.HiddenUserServer || jid.Server == types.HostedLIDServer
+}
+
 func isPN(jid types.JID) bool {
 	return jid.Server == types.DefaultUserServer && jid.User != ""
 }
 
 // keyFor decide la llave de la base: teléfono si se conoce, si no LID.
-func keyFor(id Identity) string {
+func keyFor(id identityNative) string {
 	switch {
 	case !id.PN.IsEmpty() && isPN(id.PN):
 		return id.PN.String()

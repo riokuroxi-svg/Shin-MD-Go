@@ -23,10 +23,9 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/store"
+	"shin-go/internal/wa"
 )
 
 // ─── puerta de la economía (economyGate del JS) ─────────────────────────────
@@ -63,9 +62,9 @@ func ecoAllowed(c *bot.Context) (bool, error) {
 func chatID(c *bot.Context) string { return c.Chat.String() }
 
 // userKey traduce un JID a la llave de la base (teléfono si se conoce).
-func userKey(c *bot.Context, j types.JID) string {
+func userKey(c *bot.Context, j wa.JID) string {
 	j = j.ToNonAD()
-	if j.Server == types.HiddenUserServer || j.Server == "lid" {
+	if j.Server == wa.HiddenUserServer || j.Server == "lid" {
 		if pn, err := c.DB.PNForLID(c.Ctx, j.String()); err == nil && pn != "" {
 			return pn
 		}
@@ -74,11 +73,11 @@ func userKey(c *bot.Context, j types.JID) string {
 }
 
 // target: a quién van los comandos que aceptan mención o cita.
-func target(c *bot.Context) (types.JID, bool) {
+func target(c *bot.Context) (wa.JID, bool) {
 	if m := c.Mentioned(); len(m) > 0 {
 		return m[0], true
 	}
-	return types.JID{}, false
+	return wa.JID{}, false
 }
 
 func init() {

@@ -8,9 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/wa"
 )
@@ -19,7 +16,7 @@ import (
 // tienen que decidir con el estado real: la caché de un minuto es perfecta para
 // permisos de mensajes, pero no para "¿este ya es admin?" justo antes de
 // ascenderlo.
-func groupInfo(c *bot.Context) *types.GroupInfo {
+func groupInfo(c *bot.Context) *wa.GroupInfo {
 	info, err := c.Bot.GroupInfo(c.Ctx, c.Chat)
 	if err != nil {
 		return nil
@@ -57,7 +54,7 @@ func fecha(ms int64) string {
 }
 
 // activitySince cuenta los mensajes de alguien desde hace `d`.
-func activitySince(c *bot.Context, who types.JID, d time.Duration) (int64, error) {
+func activitySince(c *bot.Context, who wa.JID, d time.Duration) (int64, error) {
 	_, recientes, err := c.DB.Messages(c.Ctx, c.Chat.String(), userKey(c, who), time.Now().Add(-d))
 	return recientes, err
 }
@@ -65,24 +62,9 @@ func activitySince(c *bot.Context, who types.JID, d time.Duration) (int64, error
 // quotedImage devuelve el ImageMessage del mensaje al que se responde (nil si
 // no hay imagen). Se usa en `.setgpbanner`: la foto del grupo solo cambia con
 // una imagen que alguien haya citado, nunca descargando cosas por gusto.
-func quotedImage(c *bot.Context) *waE2E.ImageMessage {
-	msg := wa.Unwrap(c.Event.Message)
-	if msg == nil {
-		return nil
-	}
-	ci := wa.ContextInfo(msg)
-	if ci == nil {
-		return nil
-	}
-	citado := ci.GetQuotedMessage()
-	if citado == nil {
-		return nil
-	}
-	inner := wa.Unwrap(citado)
-	if inner == nil {
-		return nil
-	}
-	return inner.GetImageMessage()
+func quotedImage(c *bot.Context) (wa.Medio, bool) {
+	medio, ok := wa.MedioCitado(c.Event)
+	return medio, ok && medio.Tipo == wa.MedioImagen
 }
 
 // textoPlantilla sustituye los marcadores de la bienvenida y la despedida.

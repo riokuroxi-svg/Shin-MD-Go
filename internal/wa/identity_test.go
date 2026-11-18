@@ -5,8 +5,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-
-	"go.mau.fi/whatsmeow/types"
 )
 
 // fakeIDs es una base de identidades en memoria (la real es SQLite).
@@ -47,8 +45,8 @@ func TestResolverFromAlternate(t *testing.T) {
 	r := NewResolver(db, nil)
 	ctx := context.Background()
 
-	lid, _ := types.ParseJID("123456789012345@lid")
-	pn, _ := types.ParseJID("5215512345678@s.whatsapp.net")
+	lid, _ := ParseJID("123456789012345@lid")
+	pn, _ := ParseJID("5215512345678@s.whatsapp.net")
 
 	// El mensaje llega por LID y trae el teléfono en el alternativo: la llave
 	// tiene que ser el teléfono, y la pareja queda guardada.
@@ -67,13 +65,13 @@ func TestResolverFromAlternate(t *testing.T) {
 func TestResolverLearnedFromDatabase(t *testing.T) {
 	db := newFakeIDs()
 	ctx := context.Background()
-	lid, _ := types.ParseJID("999@lid")
-	pn, _ := types.ParseJID("5215500000000@s.whatsapp.net")
+	lid, _ := ParseJID("999@lid")
+	pn, _ := ParseJID("5215500000000@s.whatsapp.net")
 	_ = db.PutIdentity(ctx, lid.String(), pn.String())
 
 	// Resolver nuevo (como tras un reinicio): sin memoria, solo con la base.
 	r := NewResolver(db, nil)
-	id := r.Resolve(ctx, lid, types.EmptyJID)
+	id := r.Resolve(ctx, lid, JID{})
 	if id.Key != pn.String() {
 		t.Fatalf("llave = %q, se esperaba el teléfono %q", id.Key, pn.String())
 	}
@@ -85,8 +83,8 @@ func TestResolverUnknownLIDKeepsWorking(t *testing.T) {
 
 	// Un LID que nunca se ha visto: no se puede resolver (WhatsApp no expone
 	// LID → teléfono), pero el bot tiene que seguir funcionando con esa llave.
-	lid, _ := types.ParseJID("777777777777@lid")
-	id := r.Resolve(ctx, lid, types.EmptyJID)
+	lid, _ := ParseJID("777777777777@lid")
+	id := r.Resolve(ctx, lid, JID{})
 
 	if id.Key != lid.String() {
 		t.Fatalf("llave = %q, se esperaba el LID", id.Key)
@@ -103,8 +101,8 @@ func TestResolverPhoneOnly(t *testing.T) {
 	r := NewResolver(newFakeIDs(), nil)
 	ctx := context.Background()
 
-	pn, _ := types.ParseJID("5215511111111@s.whatsapp.net")
-	id := r.Resolve(ctx, pn, types.EmptyJID)
+	pn, _ := ParseJID("5215511111111@s.whatsapp.net")
+	id := r.Resolve(ctx, pn, JID{})
 	if id.Key != pn.String() || !id.Known() {
 		t.Fatalf("identidad = %+v", id)
 	}
@@ -118,14 +116,14 @@ func TestSamePersonAcrossAddressing(t *testing.T) {
 	r := NewResolver(db, nil)
 	ctx := context.Background()
 
-	lid, _ := types.ParseJID("555@lid")
-	pn, _ := types.ParseJID("5215522222222@s.whatsapp.net")
-	otro, _ := types.ParseJID("5215533333333@s.whatsapp.net")
+	lid, _ := ParseJID("555@lid")
+	pn, _ := ParseJID("5215522222222@s.whatsapp.net")
+	otro, _ := ParseJID("5215533333333@s.whatsapp.net")
 
-	if !r.SamePerson(ctx, lid, pn, pn, types.EmptyJID) {
+	if !r.SamePerson(ctx, lid, pn, pn, JID{}) {
 		t.Fatal("el mismo usuario por LID y por teléfono debería coincidir")
 	}
-	if r.SamePerson(ctx, lid, pn, otro, types.EmptyJID) {
+	if r.SamePerson(ctx, lid, pn, otro, JID{}) {
 		t.Fatal("dos usuarios distintos no deberían coincidir")
 	}
 }
@@ -135,21 +133,21 @@ func TestResolverCacheDoesNotChangeAnswer(t *testing.T) {
 	r := NewResolver(db, nil)
 	ctx := context.Background()
 
-	lid, _ := types.ParseJID("888@lid")
-	pn, _ := types.ParseJID("5215544444444@s.whatsapp.net")
+	lid, _ := ParseJID("888@lid")
+	pn, _ := ParseJID("5215544444444@s.whatsapp.net")
 
 	first := r.Resolve(ctx, lid, pn)
-	second := r.Resolve(ctx, lid, types.EmptyJID) // ahora sin alternativo: usa caché
+	second := r.Resolve(ctx, lid, JID{}) // ahora sin alternativo: usa caché
 	if first.Key != second.Key {
 		t.Fatalf("la caché cambió la respuesta: %q vs %q", first.Key, second.Key)
 	}
 }
 
 func TestIsLID(t *testing.T) {
-	lid, _ := types.ParseJID("123@lid")
-	hosted, _ := types.ParseJID("123@hosted.lid")
-	pn, _ := types.ParseJID("5215512345678@s.whatsapp.net")
-	group, _ := types.ParseJID("123-456@g.us")
+	lid, _ := ParseJID("123@lid")
+	hosted, _ := ParseJID("123@hosted.lid")
+	pn, _ := ParseJID("5215512345678@s.whatsapp.net")
+	group, _ := ParseJID("123-456@g.us")
 
 	if !IsLID(lid) || !IsLID(hosted) {
 		t.Fatal("los @lid deberían detectarse como LID")

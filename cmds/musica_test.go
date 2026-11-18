@@ -15,9 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/musica"
+	"shin-go/internal/wa"
 )
 
 // montaFuente monta el mini-servidor de "catalogo": Audius con un audio
@@ -158,7 +157,7 @@ func TestMotivosDeFallo(t *testing.T) {
 
 // La lista guardada: «.play 2» elige la segunda.
 func TestListaGuardadaYNumerada(t *testing.T) {
-	chat := types.NewJID("chat-lista-x", types.GroupServer)
+	chat := wa.NewJID("chat-lista-x", wa.GroupServer)
 	defer func() { muMusica.Lock(); delete(listasMus, chat); muMusica.Unlock() }()
 
 	b := musica.Busqueda{Consulta: "x", Fallos: map[string]string{}, Pistas: []musica.Pista{
@@ -182,7 +181,7 @@ func TestListaGuardadaYNumerada(t *testing.T) {
 
 // El semáforo por chat frena la tercera bajada (las dos primeras caben).
 func TestSemaforoPorChat(t *testing.T) {
-	chat := types.NewJID("chat-semaforo", types.GroupServer)
+	chat := wa.NewJID("chat-semaforo", wa.GroupServer)
 	defer func() { muMusica.Lock(); delete(slotsMus, chat); muMusica.Unlock() }()
 
 	// Simulamos dos bajadas en curso para ese chat.
@@ -205,7 +204,7 @@ func TestPlaySinTextoGuia(t *testing.T) {
 	// El comando con caja == "" devuelve el texto de ayuda; la capa Reply la
 	// enseña. Probamos que el comando Recuerda ese texto mediante la señal del
 	// semáforo: sin búsqueda, no hay lista nueva.
-	chat := types.NewJID("chat-guia", types.GroupServer)
+	chat := wa.NewJID("chat-guia", wa.GroupServer)
 	muMusica.Lock()
 	delete(listasMus, chat)
 	muMusica.Unlock()

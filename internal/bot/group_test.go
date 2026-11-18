@@ -5,14 +5,12 @@ import (
 	"context"
 	"testing"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/wa"
 )
 
-func jid(t *testing.T, s string) types.JID {
+func jid(t *testing.T, s string) wa.JID {
 	t.Helper()
-	j, err := types.ParseJID(s)
+	j, err := wa.ParseJID(s)
 	if err != nil {
 		t.Fatalf("JID inválido %q: %v", s, err)
 	}
@@ -30,22 +28,22 @@ func TestParticipantIsAdminAcrossLID(t *testing.T) {
 	lidAdmin := jid(t, "111111111111111@lid")
 	pnUser := jid(t, "5215599999999@s.whatsapp.net")
 
-	info := &types.GroupInfo{
+	info := &wa.GroupInfo{
 		JID: jid(t, "123-456@g.us"),
-		Participants: []types.GroupParticipant{
+		Participants: []wa.GroupParticipant{
 			// el admin aparece con LID + teléfono, como lo manda WhatsApp
 			{JID: lidAdmin, LID: lidAdmin, PhoneNumber: pnAdmin, IsAdmin: true},
 			{JID: pnUser, PhoneNumber: pnUser},
 		},
 	}
 
-	if !participantIsAdmin(ctx, ids, info, pnAdmin, types.EmptyJID) {
+	if !participantIsAdmin(ctx, ids, info, pnAdmin, wa.JID{}) {
 		t.Error("el admin por teléfono no fue reconocido")
 	}
-	if !participantIsAdmin(ctx, ids, info, lidAdmin, types.EmptyJID) {
+	if !participantIsAdmin(ctx, ids, info, lidAdmin, wa.JID{}) {
 		t.Error("el admin por LID no fue reconocido")
 	}
-	if participantIsAdmin(ctx, ids, info, pnUser, types.EmptyJID) {
+	if participantIsAdmin(ctx, ids, info, pnUser, wa.JID{}) {
 		t.Error("un participante normal pasó como admin")
 	}
 
@@ -61,12 +59,12 @@ func TestParticipantSuperAdmin(t *testing.T) {
 	ids := wa.NewResolver(nil, nil)
 	creador := jid(t, "5215500000001@s.whatsapp.net")
 
-	info := &types.GroupInfo{
-		Participants: []types.GroupParticipant{
+	info := &wa.GroupInfo{
+		Participants: []wa.GroupParticipant{
 			{JID: creador, IsSuperAdmin: true},
 		},
 	}
-	if !participantIsAdmin(ctx, ids, info, creador, types.EmptyJID) {
+	if !participantIsAdmin(ctx, ids, info, creador, wa.JID{}) {
 		t.Fatal("el creador del grupo debería contar como admin")
 	}
 }
@@ -75,10 +73,10 @@ func TestParticipantIsAdminEdgeCases(t *testing.T) {
 	ctx := context.Background()
 	ids := wa.NewResolver(nil, nil)
 
-	if participantIsAdmin(ctx, ids, nil, jid(t, "1@s.whatsapp.net"), types.EmptyJID) {
+	if participantIsAdmin(ctx, ids, nil, jid(t, "1@s.whatsapp.net"), wa.JID{}) {
 		t.Fatal("sin información del grupo no se puede afirmar que alguien es admin")
 	}
-	if participantIsAdmin(ctx, ids, &types.GroupInfo{}, types.EmptyJID, types.EmptyJID) {
+	if participantIsAdmin(ctx, ids, &wa.GroupInfo{}, wa.JID{}, wa.JID{}) {
 		t.Fatal("un remitente vacío no es admin")
 	}
 }

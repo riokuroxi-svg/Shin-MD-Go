@@ -25,7 +25,6 @@ import (
 	"shin-go/internal/bot"
 	"shin-go/internal/gacha"
 	"shin-go/internal/store"
-	"shin-go/internal/wa"
 )
 
 // Tiempos del gacha, iguales que el JS.
@@ -180,12 +179,12 @@ func registerClaim() {
 			chat, key := chatID(c), c.Key()
 
 			// El id del mensaje citado: es la llave del roll.
-			ci := wa.ContextInfo(c.Event.Message)
-			if ci == nil || ci.GetStanzaID() == "" {
+			if c.Event == nil || c.Event.Quoted == nil || c.Event.Quoted.ID == "" {
 				return c.Reply(fmt.Sprintf(
 					"❀ Debes *responder* al mensaje del personaje para reclamarlo.\n"+
 						"> Saca uno con *%sroll*", c.Bot.FirstPrefix()))
 			}
+			quotedID := c.Event.Quoted.ID
 
 			ok, wait, err := c.DB.ClaimCooldown(c.Ctx, chat, key, "last_claim", claimCooldown)
 			if err != nil {
@@ -196,7 +195,7 @@ func registerClaim() {
 					formatWait(int64(wait.Seconds()))))
 			}
 
-			owned, err := c.DB.ClaimRoll(c.Ctx, chat, ci.GetStanzaID(), key, time.Now())
+			owned, err := c.DB.ClaimRoll(c.Ctx, chat, quotedID, key, time.Now())
 			switch err {
 			case nil:
 			case store.ErrAlreadyClaimed:

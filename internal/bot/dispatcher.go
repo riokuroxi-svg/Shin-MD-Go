@@ -1,33 +1,8 @@
 // Shin-MD-Go — Copyright (C) 2026 riokuroxi-svg · AGPL-3.0-only
 //
-// dispatcher.go — Reparte los mensajes entrantes entre varias gorutinas.
-//
-// El problema que resuelve, y que no es teórico:
-//
-// whatsmeow entrega los eventos a los handlers **de uno en uno**: su cola
-// interna (2048 nodos) llama al handler y espera a que termine antes de coger
-// el siguiente nodo. Con el handler pegado a la red, un solo `.sticker` de un
-// vídeo (descargar + ffmpeg + subir ≈ 10–60 s) deja al bot sordo todo ese rato:
-// los mensajes se van apilando hasta que la cola de WhatsApp revienta y los
-// nodos se descartan. El síntoma en producción es "el bot se quedó mudo y
-// luego contestó cosas viejas de golpe".
-//
-// La solución de manual es esta: pocas gorutinas fijas (no una por mensaje, que
-// sería un vertedero de memoria) leyendo de una cola con techo. Si la cola se
-// llena, se descarta el mensaje y se cuenta — mejor perder un comando suelto
-// que bloquear la conexión entera y perder miles.
-//
-// Lo que NO se rompe al paralelizar:
-//
-//   - **El dinero.** Cada movimiento es una sentencia atómica en SQLite
-//     (`WHERE coins >= ?`), no un leer-modificar-escribir. Dos apuestas del
-//     mismo usuario a la vez se resuelven igual que si fueran seguidas.
-//   - **El espaciado anti-ban.** Los envíos siguen pasando por la cola de
-//     `wa.Queue`, que serializa y espera su retardo. Paralelizar el trabajo no
-//     manda dos mensajes juntos: solo deja de hacer cola *antes* de enviar.
-//   - **El orden dentro de una conversación** no está garantizado (dos mensajes
-//     seguidos pueden contestarse al revés si uno tarda más). Es el precio de
-//     no bloquear, y en este bot no hay comandos que dependan del orden.
+// dispatcher.go — Cola acotada por conversación para mensajes y cambios de grupo.
+// Los workers son fijos; las tareas de cada chat mantienen FIFO y chats distintos
+// pueden avanzar en paralelo. El callback de whatsmeow solo añade una tarea y sale.
 package bot
 
 import (
@@ -38,67 +13,82 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.mau.fi/whatsmeow/types/events"
+	"shin-go/internal/wa"
 
 	"shin-go/internal/xlog"
 )
 
 const (
-	// WorkersPorDefecto: cuántos mensajes se procesan a la vez. Cuatro cubre de
-	// sobra el caso normal (la mayoría de comandos tardan milisegundos) y deja
-	// aire para dos o tres conversiones de medios sin que se pisen.
 	WorkersPorDefecto = 4
-
-	// ColaPorDefecto: cuántos mensajes pueden esperar. Con 4 workers, 128 en
-	// cola son varios minutos de trabajo: si se llena es que algo se atascó de
-	// verdad, no que haya prisa.
-	ColaPorDefecto = 128
-
-	// workersMax y colaMax acotan lo que se pueda configurar por entorno: 64
-	// gorutinas contra SQLite (una sola conexión de escritura) no aceleran nada
-	// y solo gastan memoria.
-	workersMax = 16
-	colaMax    = 1024
+	ColaPorDefecto    = 128
+	workersMax        = 16
+	colaMax           = 1024
 )
 
-// Dispatcher es el repartidor de mensajes.
-type Dispatcher struct {
-	handle func(context.Context, *events.Message)
+type tipoTarea uint8
 
-	// mu es de lectura/escritura: Submit lo toma COMPARTIDO mientras manda a la
-	// cola y Close lo toma EN EXCLUSIVA para cerrarla. Sin eso, un Submit que
-	// llegara justo en ese instante mandaría a un canal cerrado y el pánico se
-	// llevaría por delante el proceso entero.
-	mu      sync.RWMutex
-	jobs    chan *events.Message
-	log     *xlog.Logger
-	workers int
+const (
+	tareaMensaje tipoTarea = iota
+	tareaGrupo
+)
 
-	// Contadores (atómicos: los lee `.info` desde otra gorutina).
-	recibidos   atomic.Uint64
-	procesados  atomic.Uint64
-	descartados atomic.Uint64
-	activos     atomic.Int64
-
-	cerrado atomic.Bool
-	wg      sync.WaitGroup
+type tareaDispatcher struct {
+	tipo    tipoTarea
+	mensaje *wa.IncomingMessage
+	grupo   *wa.GroupChange
+	puesta  time.Time
 }
 
-// dispatcherActivo es el repartidor del proceso. Se guarda en un atómico
-// porque lo lee `.info` desde un worker y lo escribe el arranque desde otra
-// gorutina: un puntero normal ahí sería una carrera de las que solo se ven con
-// `-race` (y en producción una vez cada mil reinicios).
+type colaChat struct {
+	clave  string
+	tareas []tareaDispatcher
+	activa bool
+}
+
+// Dispatcher usa un scheduler FIFO por chat con un pool fijo de workers.
+// Cada tipo de evento tiene como máximo la capacidad de cola configurada; así
+// los mensajes no expulsan cambios de grupo ni viceversa. No crea goroutines
+// por evento y el ready channel solo guarda una referencia por chat activo.
+type Dispatcher struct {
+	handle      func(context.Context, *wa.IncomingMessage)
+	handleGroup func(context.Context, *wa.GroupChange)
+	log         *xlog.Logger
+	workers     int
+	colaMax     int
+	grupoMax    int
+
+	mu        sync.Mutex
+	colas     map[string]*colaChat
+	ready     chan *colaChat
+	pendMsg   int
+	pendGrupo int
+	started   bool
+	closed    bool
+	ctx       context.Context
+	stop      chan struct{}
+	wg        sync.WaitGroup
+
+	recibidos         atomic.Uint64
+	procesados        atomic.Uint64
+	descartados       atomic.Uint64
+	gruposRecibidos   atomic.Uint64
+	gruposProcesados  atomic.Uint64
+	gruposDescartados atomic.Uint64
+	activos           atomic.Int64
+	gruposActivos     atomic.Int64
+	tiempoTotalNS     atomic.Int64
+	tiempoMaxNS       atomic.Int64
+	esperaTotalNS     atomic.Int64
+	esperaMaxNS       atomic.Int64
+	esperaCount       atomic.Uint64
+}
+
 var dispatcherActivo atomic.Pointer[Dispatcher]
 
-// SetDispatcher registra el repartidor del proceso (lo llama main).
-func SetDispatcher(d *Dispatcher) { dispatcherActivo.Store(d) }
-
-// DispatcherActivo devuelve el repartidor (nil si aún no hay).
+func SetDispatcher(d *Dispatcher)   { dispatcherActivo.Store(d) }
 func DispatcherActivo() *Dispatcher { return dispatcherActivo.Load() }
 
-// NewDispatcher crea el repartidor y arranca sus workers. `handle` es el
-// router; `workers` y `cola` se recortan a valores razonables si vienen mal.
-func NewDispatcher(handle func(context.Context, *events.Message), workers, cola int, log *xlog.Logger) *Dispatcher {
+func NewDispatcher(handle func(context.Context, *wa.IncomingMessage), workers, cola int, log *xlog.Logger) *Dispatcher {
 	if handle == nil {
 		panic("bot.NewDispatcher: handler nil")
 	}
@@ -115,126 +105,277 @@ func NewDispatcher(handle func(context.Context, *events.Message), workers, cola 
 		cola = colaMax
 	}
 	return &Dispatcher{
-		handle:  handle,
-		jobs:    make(chan *events.Message, cola),
-		workers: workers,
-		log:     log,
+		handle:   handle,
+		log:      log,
+		workers:  workers,
+		colaMax:  cola,
+		grupoMax: cola,
+		colas:    make(map[string]*colaChat),
+		ready:    make(chan *colaChat, cola*2),
+		stop:     make(chan struct{}),
 	}
 }
 
-// Start lanza los workers. Se detienen cuando `ctx` se cancela (Ctrl+C) o
-// cuando se llama a Close(); en los dos casos terminan el mensaje que tengan
-// entre manos antes de salir, para no dejar una transacción a medias.
+// SetGroupHandler configura el trabajo lento de eventos de grupo antes de Start.
+func (d *Dispatcher) SetGroupHandler(fn func(context.Context, *wa.GroupChange)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.started && !d.closed {
+		d.handleGroup = fn
+	}
+}
+
 func (d *Dispatcher) Start(ctx context.Context) {
-	// El canal se captura AQUÍ, no se lee del campo dentro del bucle: si el
-	// worker leyera `d.jobs` en cada vuelta y Close lo pusiera a nil, se
-	// quedaría esperando para siempre en un canal nil (recibir de nil bloquea
-	// eternamente, y eso fue justo el primer bug de este archivo).
-	d.mu.RLock()
-	jobs := d.jobs
-	d.mu.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	d.mu.Lock()
+	if d.started || d.closed {
+		d.mu.Unlock()
+		return
+	}
+	d.started = true
+	d.ctx = ctx
+	d.wg.Add(d.workers)
+	d.mu.Unlock()
 
 	for i := 0; i < d.workers; i++ {
-		d.wg.Add(1)
-		go d.worker(ctx, jobs, i)
+		go d.worker(ctx)
 	}
 }
 
-func (d *Dispatcher) worker(ctx context.Context, jobs <-chan *events.Message, id int) {
-	defer d.wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case evt, ok := <-jobs:
-			if !ok {
-				return
-			}
-			d.ejecutar(ctx, evt)
-		}
-	}
-}
-
-// ejecutar corre un mensaje con red de seguridad: si el handler entra en
-// pánico, se registra y el worker sigue vivo. Sin este `recover`, un pánico
-// mata la gorutina y el repartidor pierde un carril para siempre.
-func (d *Dispatcher) ejecutar(ctx context.Context, evt *events.Message) {
-	d.activos.Add(1)
-	defer d.activos.Add(-1)
-
-	defer func() {
-		if rec := recover(); rec != nil {
-			if d.log != nil {
-				d.log.Err(fmt.Sprintf("pánico en el mensaje: %v\n%s", rec, debug.Stack()))
-			}
-		}
-		d.procesados.Add(1)
-	}()
-
-	d.handle(ctx, evt)
-}
-
-// Submit encola un mensaje. Devuelve false si la cola está llena (y lo cuenta):
-// el mensaje se pierde, pero la conexión sigue leyendo.
-func (d *Dispatcher) Submit(evt *events.Message) bool {
+func (d *Dispatcher) Submit(evt *wa.IncomingMessage) bool {
 	if evt == nil {
 		return true
 	}
 	d.recibidos.Add(1)
+	key := evt.Chat.String()
+	if evt.Chat.IsEmpty() {
+		key = evt.Sender.String()
+	}
+	if key == "" {
+		key = "<unknown>"
+	}
+	return d.enqueue(key, tareaDispatcher{tipo: tareaMensaje, mensaje: evt, puesta: time.Now()})
+}
 
-	d.mu.RLock()
-	jobs := d.jobs
-	if jobs == nil || d.cerrado.Load() {
-		d.mu.RUnlock()
-		d.descartados.Add(1)
+// SubmitGroup no ejecuta lógica de grupo en el callback de whatsmeow.
+// El llamador debe invalidar antes la caché de permisos, que sí es trabajo corto.
+func (d *Dispatcher) SubmitGroup(evt *wa.GroupChange) bool {
+	if evt == nil {
+		return true
+	}
+	d.gruposRecibidos.Add(1)
+	key := evt.JID.String()
+	if key == "" {
+		key = "<unknown-group>"
+	}
+	return d.enqueue(key, tareaDispatcher{tipo: tareaGrupo, grupo: evt, puesta: time.Now()})
+}
+
+func (d *Dispatcher) enqueue(key string, task tareaDispatcher) bool {
+	d.mu.Lock()
+	if !d.started || d.closed || d.ctx.Err() != nil {
+		d.mu.Unlock()
+		d.descarta(task)
 		return false
 	}
-	select {
-	case jobs <- evt:
-		d.mu.RUnlock()
-		return true
-	default:
-		d.mu.RUnlock()
-		d.descartados.Add(1)
-		if d.log != nil && d.descartados.Load()%10 == 1 {
-			// Se avisa de vez en cuando y no en cada mensaje: si la cola se
-			// llenó una vez, el log no puede llenarse también.
-			d.log.Warn(fmt.Sprintf("cola de mensajes llena: %d descartados en total", d.descartados.Load()))
-		}
+	if task.tipo == tareaGrupo && d.handleGroup == nil {
+		d.mu.Unlock()
+		d.descarta(task)
 		return false
+	}
+	if task.tipo == tareaMensaje && d.pendMsg >= d.colaMax {
+		d.mu.Unlock()
+		d.descarta(task)
+		d.avisaColaLlena(task.tipo)
+		return false
+	}
+	if task.tipo == tareaGrupo && d.pendGrupo >= d.grupoMax {
+		d.mu.Unlock()
+		d.descarta(task)
+		d.avisaColaLlena(task.tipo)
+		return false
+	}
+	q := d.colas[key]
+	if q == nil {
+		q = &colaChat{clave: key}
+		d.colas[key] = q
+	}
+	q.tareas = append(q.tareas, task)
+	if task.tipo == tareaMensaje {
+		d.pendMsg++
+	} else {
+		d.pendGrupo++
+	}
+	if !q.activa {
+		q.activa = true
+		d.ready <- q // cap(ready) cubre todos los pendientes posibles
+	}
+	d.mu.Unlock()
+	return true
+}
+
+func (d *Dispatcher) worker(ctx context.Context) {
+	defer d.wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			d.descartaTodoPendiente()
+			return
+		case <-d.stop:
+			return
+		case q := <-d.ready:
+			if q == nil {
+				continue
+			}
+			d.mu.Lock()
+			if d.closed || len(q.tareas) == 0 {
+				d.mu.Unlock()
+				continue
+			}
+			task := q.tareas[0]
+			q.tareas[0] = tareaDispatcher{} // liberar el evento antes de compactar
+			q.tareas = q.tareas[1:]
+			if task.tipo == tareaMensaje {
+				d.pendMsg--
+			} else {
+				d.pendGrupo--
+			}
+			d.mu.Unlock()
+
+			waitNS := time.Since(task.puesta).Nanoseconds()
+			d.esperaCount.Add(1)
+			d.esperaTotalNS.Add(waitNS)
+			for old := d.esperaMaxNS.Load(); waitNS > old && !d.esperaMaxNS.CompareAndSwap(old, waitNS); old = d.esperaMaxNS.Load() {
+			}
+			if ctx.Err() != nil {
+				d.descarta(task)
+				d.finTarea(q, ctx)
+				continue
+			}
+			d.ejecuta(ctx, task)
+			d.finTarea(q, ctx)
+		}
 	}
 }
 
-// Close cierra la cola y espera a que los workers terminen lo que tienen entre
-// manos. Llamarlo dos veces no pasa nada.
-func (d *Dispatcher) Close() {
-	if d.cerrado.Swap(true) {
+func (d *Dispatcher) finTarea(q *colaChat, ctx context.Context) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.closed || ctx.Err() != nil {
+		d.descartaPendientes(q)
+		delete(d.colas, q.clave)
 		return
 	}
-	// Se cierra el canal pero NO se pone a nil: los workers ya tienen su copia
-	// y un canal cerrado les devuelve ok=false. Ponerlo a nil solo servía para
-	// que las estadísticas dijeran que no hay cola.
-	d.mu.Lock()
-	jobs := d.jobs
-	if jobs != nil {
-		close(jobs)
+	if len(q.tareas) == 0 {
+		q.activa = false
+		delete(d.colas, q.clave)
+		return
 	}
+	// Mantener la cola del chat activa y volver a ponerla al final del ready
+	// permite que otros chats reciban un turno entre tareas consecutivas.
+	d.ready <- q
+}
+
+func (d *Dispatcher) ejecuta(ctx context.Context, task tareaDispatcher) {
+	inicio := time.Now()
+	d.activos.Add(1)
+	if task.tipo == tareaGrupo {
+		d.gruposActivos.Add(1)
+	}
+	defer func() {
+		d.activos.Add(-1)
+		d.tiempoTotalNS.Add(time.Since(inicio).Nanoseconds())
+		maxNS := time.Since(inicio).Nanoseconds()
+		for old := d.tiempoMaxNS.Load(); maxNS > old && !d.tiempoMaxNS.CompareAndSwap(old, maxNS); old = d.tiempoMaxNS.Load() {
+		}
+		if task.tipo == tareaGrupo {
+			d.gruposActivos.Add(-1)
+			d.gruposProcesados.Add(1)
+		} else {
+			d.procesados.Add(1)
+		}
+		if rec := recover(); rec != nil && d.log != nil {
+			d.log.Err(fmt.Sprintf("pánico en tarea del dispatcher: %v\n%s", rec, debug.Stack()))
+		}
+	}()
+	if task.tipo == tareaGrupo {
+		d.handleGroup(ctx, task.grupo)
+	} else {
+		d.handle(ctx, task.mensaje)
+	}
+}
+
+func (d *Dispatcher) descarta(task tareaDispatcher) {
+	if task.tipo == tareaGrupo {
+		d.gruposDescartados.Add(1)
+	} else {
+		d.descartados.Add(1)
+	}
+}
+
+func (d *Dispatcher) descartaTodoPendiente() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, q := range d.colas {
+		d.descartaPendientes(q)
+	}
+	d.colas = make(map[string]*colaChat)
+}
+
+func (d *Dispatcher) descartaPendientes(q *colaChat) {
+	for i, task := range q.tareas {
+		d.descarta(task)
+		if task.tipo == tareaMensaje {
+			d.pendMsg--
+		} else {
+			d.pendGrupo--
+		}
+		q.tareas[i] = tareaDispatcher{}
+	}
+	q.tareas = nil
+	q.activa = false
+}
+
+func (d *Dispatcher) avisaColaLlena(kind tipoTarea) {
+	if d.log == nil {
+		return
+	}
+	if kind == tareaGrupo {
+		n := d.gruposDescartados.Load()
+		if n == 1 || n%10 == 0 {
+			d.log.Warn(fmt.Sprintf("cola de eventos de grupo llena: %d descartados", n))
+		}
+		return
+	}
+	n := d.descartados.Load()
+	if n == 1 || n%10 == 0 {
+		d.log.Warn(fmt.Sprintf("cola de mensajes llena: %d descartados", n))
+	}
+}
+
+const esperaCierre = 5 * time.Second
+
+// Close deja de aceptar tareas, cuenta y libera las pendientes, y espera a que
+// terminen las activas. Los handlers reciben el contexto del proceso y deben
+// respetarlo para que el cierre sea rápido.
+func (d *Dispatcher) Close() {
+	d.mu.Lock()
+	if d.closed {
+		d.mu.Unlock()
+		return
+	}
+	d.closed = true
+	close(d.stop)
+	for _, q := range d.colas {
+		d.descartaPendientes(q)
+	}
+	d.colas = make(map[string]*colaChat)
 	d.mu.Unlock()
-	// Los workers que siguen esperando en `<-ctx.Done()` no salen con el canal
-	// cerrado... bueno: sí, el `case evt, ok := <-jobs` con ok=false también
-	// los saca. Así que esto espera a los dos casos.
 	waitConTimeout(&d.wg)
 }
 
-// esperaCierre: cuánto se espera a que los workers acaben al apagar.
-const esperaCierre = 5 * time.Second
-
-// timeoutCierre devuelve el canal del reloj de cierre.
-func timeoutCierre() <-chan time.Time { return time.After(esperaCierre) }
-
-// waitConTimeout espera al WaitGroup, pero sin poder colgarse para siempre: si
-// un handler se quedó atascado en una llamada de red, el proceso tiene que
-// poder terminar igualmente.
 func waitConTimeout(wg *sync.WaitGroup) {
 	hecho := make(chan struct{})
 	go func() {
@@ -243,40 +384,67 @@ func waitConTimeout(wg *sync.WaitGroup) {
 	}()
 	select {
 	case <-hecho:
-	case <-timeoutCierre():
+	case <-time.After(esperaCierre):
 	}
 }
 
-// Estadisticas es la foto del repartidor (la pinta `.info`).
 type Estadisticas struct {
-	Workers     int
-	Cola        int
-	EnCola      int
-	Activos     int64
-	Recibidos   uint64
-	Procesados  uint64
-	Descartados uint64
+	Workers           int
+	Cola              int
+	EnCola            int
+	Activos           int64
+	Recibidos         uint64
+	Procesados        uint64
+	Descartados       uint64
+	GrupoCola         int
+	GrupoEnCola       int
+	GrupoActivos      int64
+	GruposRecibidos   uint64
+	GruposProcesados  uint64
+	GruposDescartados uint64
+	DuracionPromedio  time.Duration
+	DuracionMaxima    time.Duration
+	EsperaPromedio    time.Duration
+	EsperaMaxima      time.Duration
 }
 
-// Stats devuelve los contadores.
 func (d *Dispatcher) Stats() Estadisticas {
 	if d == nil {
 		return Estadisticas{}
 	}
-	d.mu.RLock()
-	jobs := d.jobs
-	d.mu.RUnlock()
-
+	d.mu.Lock()
+	msgQueue, groupQueue := d.pendMsg, d.pendGrupo
+	d.mu.Unlock()
+	procesados := d.procesados.Load() + d.gruposProcesados.Load()
 	e := Estadisticas{
-		Workers:     d.workers,
-		Activos:     d.activos.Load(),
-		Recibidos:   d.recibidos.Load(),
-		Procesados:  d.procesados.Load(),
-		Descartados: d.descartados.Load(),
+		Workers:           d.workers,
+		Cola:              d.colaMax,
+		EnCola:            msgQueue,
+		Activos:           d.activos.Load(),
+		Recibidos:         d.recibidos.Load(),
+		Procesados:        d.procesados.Load(),
+		Descartados:       d.descartados.Load(),
+		GrupoCola:         d.grupoMax,
+		GrupoEnCola:       groupQueue,
+		GrupoActivos:      d.gruposActivos.Load(),
+		GruposRecibidos:   d.gruposRecibidos.Load(),
+		GruposProcesados:  d.gruposProcesados.Load(),
+		GruposDescartados: d.gruposDescartados.Load(),
+		DuracionMaxima:    time.Duration(d.tiempoMaxNS.Load()),
+		EsperaMaxima:      time.Duration(d.esperaMaxNS.Load()),
 	}
-	if jobs != nil {
-		e.Cola = cap(jobs)
-		e.EnCola = len(jobs)
+	if procesados > 0 {
+		e.DuracionPromedio = time.Duration(d.tiempoTotalNS.Load() / int64(procesados))
+	}
+	if n := d.esperaCount.Load(); n > 0 {
+		e.EsperaPromedio = time.Duration(d.esperaTotalNS.Load() / int64(n))
 	}
 	return e
+}
+
+func chatKey(chat wa.JID) string {
+	if chat.IsEmpty() {
+		return "<unknown>"
+	}
+	return chat.String()
 }

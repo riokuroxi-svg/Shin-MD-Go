@@ -4,7 +4,7 @@ package bot
 import (
 	"testing"
 
-	"go.mau.fi/whatsmeow/types"
+	"shin-go/internal/wa"
 )
 
 func TestNormalizeNumber(t *testing.T) {
@@ -39,21 +39,21 @@ func TestNormalizeOwners(t *testing.T) {
 func TestIsOwnerPhoneAndLID(t *testing.T) {
 	owners := NormalizeOwners([]string{"+5215512345678"})
 
-	phone, _ := types.ParseJID("5215512345678@s.whatsapp.net")
-	if !IsOwner(phone, types.JID{}, owners) {
+	phone, _ := wa.ParseJID("5215512345678@s.whatsapp.net")
+	if !IsOwner(phone, wa.JID{}, owners) {
 		t.Fatal("el owner por teléfono no se reconoció")
 	}
 
-	lid, _ := types.ParseJID("123456789012345@lid")
+	lid, _ := wa.ParseJID("123456789012345@lid")
 	if !IsOwner(lid, phone, owners) {
 		t.Fatal("el owner por LID (teléfono en el alternativo) no se reconoció")
 	}
 
-	other, _ := types.ParseJID("5219999999999@s.whatsapp.net")
-	if IsOwner(other, types.JID{}, owners) {
+	other, _ := wa.ParseJID("5219999999999@s.whatsapp.net")
+	if IsOwner(other, wa.JID{}, owners) {
 		t.Fatal("un número que no es owner pasó como owner")
 	}
-	if IsOwner(phone, types.JID{}, nil) {
+	if IsOwner(phone, wa.JID{}, nil) {
 		t.Fatal("sin owners nadie debería ser owner")
 	}
 }

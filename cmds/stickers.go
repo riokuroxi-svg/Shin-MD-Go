@@ -93,14 +93,14 @@ func registerSticker() {
 				return c.Reply(fmt.Sprintf("ꕥ %v\n\n%s", err, ayudaSticker(c)))
 			}
 
-			medio, ok := wa.MedioDe(c.Event.Message)
+			medio, ok := wa.MedioDeEntrada(c.Event)
 			if !ok {
 				return c.Reply(fmt.Sprintf(
 					"ꕥ Mándame una *foto*, un *vídeo* o un *sticker*, o cita uno y escribe *%ssticker*.\n\n%s",
 					c.Bot.FirstPrefix(), ayudaSticker(c)))
 			}
 
-			datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+			datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 			if err != nil {
 				return c.Reply("ꕥ No pude descargar el archivo. Vuelve a mandarlo, por favor.")
 			}
@@ -197,7 +197,7 @@ func registerToImg() {
 		Desc:     "Convertir un sticker en imagen (o en vídeo si es animado)",
 		Cooldown: 3,
 		Run: func(c *bot.Context) error {
-			medio, ok := wa.MedioDe(c.Event.Message)
+			medio, ok := wa.MedioDeEntrada(c.Event)
 			if !ok {
 				return c.Reply(fmt.Sprintf(
 					"ꕥ Cita un *sticker* (o mándalo con *%stoimg*) para convertirlo en imagen.",
@@ -207,7 +207,7 @@ func registerToImg() {
 				return c.Reply("ꕥ Eso no es un sticker. Cita el sticker que quieres convertir.")
 			}
 
-			datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+			datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 			if err != nil {
 				return c.Reply("ꕥ No pude descargar el sticker. Prueba otra vez.")
 			}
@@ -265,12 +265,12 @@ func registerStickerInfo() {
 		Desc:     "Ver el paquete y el autor de un sticker",
 		Cooldown: 2,
 		Run: func(c *bot.Context) error {
-			medio, ok := wa.MedioDe(c.Event.Message)
+			medio, ok := wa.MedioDeEntrada(c.Event)
 			if !ok || medio.Tipo != wa.MedioSticker {
 				return c.Reply(fmt.Sprintf(
 					"ꕥ Cita un *sticker* y escribe *%sstickerinfo*.", c.Bot.FirstPrefix()))
 			}
-			datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+			datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 			if err != nil {
 				return c.Reply("ꕥ No pude descargar el sticker.")
 			}

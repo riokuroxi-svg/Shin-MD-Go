@@ -18,9 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
-
 	"shin-go/internal/config"
 	"shin-go/internal/store"
 	"shin-go/internal/wa"
@@ -97,7 +94,7 @@ func SetActiveRouter(r *Router) { activeRouter.Store(r) }
 
 // ForgetChat tira la caché de "bot apagado" de un chat. Lo llama el comando
 // .bot cuando cambia el ajuste, para que surta efecto al instante.
-func ForgetChat(chat types.JID) {
+func ForgetChat(chat wa.JID) {
 	if r := activeRouter.Load(); r != nil {
 		r.ForgetBotOff(chat)
 	}
@@ -114,7 +111,10 @@ func (r *Router) Cliente() *wa.Client { return r.client }
 func (r *Router) Groups() *GroupCache { return r.groups }
 
 // Handle es el punto de entrada (se registra con client.OnMessage).
-func (r *Router) Handle(ctx context.Context, evt *events.Message) {
+func (r *Router) Handle(ctx context.Context, evt *wa.IncomingMessage) {
+	if evt == nil {
+		return
+	}
 	defer func() {
 		if rec := recover(); rec != nil {
 			r.log.Err(fmt.Sprintf("pánico en handler: %v\n%s", rec, debug.Stack()))
@@ -125,7 +125,7 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 		ctx = context.Background()
 	}
 
-	info := evt.Info
+	info := evt
 
 	// ── filtros duros ────────────────────────────────────────────────────
 	// Los mensajes que manda el propio número del bot no se procesan: si no,
@@ -135,21 +135,21 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 		return
 	}
 	// Estados y difusiones no son chats: contestar ahí es la vía rápida al ban.
-	if info.Chat.Server == types.BroadcastServer || info.Chat.User == "status" {
+	if info.Chat.Server == wa.BroadcastServer || info.Chat.User == "status" {
 		return
 	}
 
 	chat := info.Chat
 	sender := info.Sender.ToNonAD()
 	senderAlt := info.SenderAlt.ToNonAD()
-	isGroup := chat.Server == types.GroupServer
+	isGroup := chat.Server == wa.GroupServer
 
 	// ── identidad ────────────────────────────────────────────────────────
 	// WhatsApp puede mandar al mismo usuario como teléfono o como LID. Se
 	// resuelve UNA vez por mensaje y todos los comandos usan la misma llave.
 	identity := r.client.IDs.Resolve(ctx, sender, senderAlt)
 
-	parsed := wa.ParseMessage(evt.Message, r.cfg.Prefixes)
+	parsed := evt.Parsed
 	// El texto que verán los hooks va limpio de controles e invisibles (los
 	// mismos que se usan para disfrazar "h t t p s : //" o falsificar nombres).
 	parsed.Text = CleanInvisible(parsed.Text)
@@ -159,6 +159,7 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 	c := &Context{
 		Ctx:       ctx,
 		Bot:       r.client,
+		Outbox:    r.client,
 		DB:        r.db,
 		Log:       r.log,
 		Groups:    r.groups,
@@ -274,7 +275,7 @@ func (r *Router) Handle(ctx context.Context, evt *events.Message) {
 // botOff consulta si el bot está apagado en el chat, con la misma caché corta
 // que el modo self: es una consulta por mensaje y no tiene sentido ir a la base
 // todo el rato, pero tampoco quedarse con un valor viejo.
-func (r *Router) botOff(ctx context.Context, chat types.JID) bool {
+func (r *Router) botOff(ctx context.Context, chat wa.JID) bool {
 	key := chat.String()
 
 	r.modeMu.Lock()
@@ -302,7 +303,7 @@ func (r *Router) botOff(ctx context.Context, chat types.JID) bool {
 
 // ForgetBotOff tira la caché de un chat (lo usa `.bot on`: si no, el comando
 // queda ignorado por su propia caché hasta medio minuto después).
-func (r *Router) ForgetBotOff(chat types.JID) {
+func (r *Router) ForgetBotOff(chat wa.JID) {
 	r.modeMu.Lock()
 	delete(r.botOffCache, chat.String())
 	r.modeMu.Unlock()
@@ -352,7 +353,7 @@ func (r *Router) selfMode(ctx context.Context) bool {
 }
 
 // reply manda un aviso del router sin tumbar el flujo si el envío falla.
-func (r *Router) reply(ctx context.Context, chat types.JID, text string) {
+func (r *Router) reply(ctx context.Context, chat wa.JID, text string) {
 	if err := r.client.SendText(ctx, chat, text, true); err != nil {
 		r.log.Warn("no se pudo avisar al usuario: " + err.Error())
 	}
@@ -393,6 +394,6 @@ func (r *Router) pruneLocked(now time.Time) {
 
 // isOwner se conserva para los comandos que ya lo llamaban; delega en la
 // comparación nueva (teléfono + LID).
-func (r *Router) isOwner(jid types.JID) bool {
-	return IsOwner(jid.ToNonAD(), types.JID{}, r.owner)
+func (r *Router) isOwner(jid wa.JID) bool {
+	return IsOwner(jid.ToNonAD(), wa.JID{}, r.owner)
 }

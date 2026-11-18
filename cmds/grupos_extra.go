@@ -20,8 +20,6 @@ import (
 	"shin-go/internal/bot"
 	"shin-go/internal/store"
 	"shin-go/internal/wa"
-
-	"go.mau.fi/whatsmeow/types"
 )
 
 func init() {
@@ -163,7 +161,7 @@ func cmdTagall(c *bot.Context) error {
 	if err != nil {
 		return c.Reply("No pude leer el grupo: " + err.Error())
 	}
-	var menciones []types.JID
+	var menciones []wa.JID
 	var sb strings.Builder
 	sb.WriteString("📢 " + strings.TrimSpace(c.Text) + "\n\n")
 	for _, p := range info.Participants {

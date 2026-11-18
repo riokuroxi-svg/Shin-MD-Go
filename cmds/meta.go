@@ -18,10 +18,9 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/ui"
+	"shin-go/internal/wa"
 )
 
 func init() {
@@ -58,7 +57,7 @@ func init() {
 			runtime.ReadMemStats(&mem)
 
 			conexion := "reconectando…"
-			if c.Bot.WA.IsConnected() {
+			if c.Bot.Connected() {
 				conexion = "activa ✓"
 			}
 
@@ -333,12 +332,12 @@ func insertBeforeLast(lineas []string, nueva string) []string {
 }
 
 // ownerJID convierte un número normalizado en JID de WhatsApp.
-func ownerJID(num string) types.JID {
+func ownerJID(num string) wa.JID {
 	n := bot.NormalizeNumber(num)
 	if n == "" {
-		return types.EmptyJID
+		return wa.JID{}
 	}
-	return types.JID{User: n, Server: types.DefaultUserServer}
+	return wa.JID{User: n, Server: wa.DefaultUserServer}
 }
 
 func sizeMB(b uint64) string {

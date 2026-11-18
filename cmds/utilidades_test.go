@@ -9,112 +9,48 @@ package cmds
 import (
 	"testing"
 
-	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
-	"google.golang.org/protobuf/proto"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/utilidades"
+	"shin-go/internal/wa"
 )
 
-// ─── .encuesta: el protobuf que se envía ────────────────────────────────────
+// ─── .encuesta: contrato interno entre comando y adaptador ───────────────────
 
-func TestConstruirEncuestaNormal(t *testing.T) {
+func TestEncuestaSpecNormal(t *testing.T) {
 	e, err := utilidades.ParsearEncuesta("¿Pizza?|Pepperoni|Hawaiana|Mexicana")
 	if err != nil {
 		t.Fatalf("no debería fallar: %v", err)
 	}
-	msg := construirEncuesta(e)
-
-	creacion := msg.GetPollCreationMessage()
-	if creacion == nil {
-		t.Fatal("falta PollCreationMessage: WhatsApp no mostraría nada")
+	spec := encuestaSpec(e)
+	if spec.Question != "¿Pizza?" || spec.Selectable != 1 || spec.Quiz || spec.Correct != -1 {
+		t.Fatalf("spec inesperado: %+v", spec)
 	}
-	if creacion.GetName() != "¿Pizza?" {
-		t.Fatalf("pregunta = %q", creacion.GetName())
+	want := []string{"Pepperoni", "Hawaiana", "Mexicana"}
+	if len(spec.Options) != len(want) {
+		t.Fatalf("opciones = %v", spec.Options)
 	}
-	if n := len(creacion.GetOptions()); n != 3 {
-		t.Fatalf("opciones = %d, se esperaban 3", n)
-	}
-	for i, quiero := range []string{"Pepperoni", "Hawaiana", "Mexicana"} {
-		if got := creacion.GetOptions()[i].GetOptionName(); got != quiero {
-			t.Fatalf("opción %d = %q, se esperaba %q", i, got, quiero)
+	for i := range want {
+		if spec.Options[i] != want[i] {
+			t.Fatalf("opción %d = %q", i, spec.Options[i])
 		}
-	}
-	if n := creacion.GetSelectableOptionsCount(); n != 1 {
-		t.Fatalf("seleccionables = %d, una encuesta normal es 1", n)
-	}
-	if creacion.GetPollType() != waE2E.PollType_POLL {
-		t.Fatalf("tipo = %v, se esperaba POLL", creacion.GetPollType())
-	}
-	if creacion.GetCorrectAnswer() != nil {
-		t.Fatal("una encuesta normal no lleva respuesta correcta")
 	}
 }
 
-func TestConstruirEncuestaQuiz(t *testing.T) {
+func TestEncuestaSpecQuizYMulti(t *testing.T) {
 	e, err := utilidades.ParsearEncuesta("Capital de México|Guadalajara|*CDMX*|Monterrey")
 	if err != nil {
 		t.Fatalf("no debería fallar: %v", err)
 	}
-	msg := construirEncuesta(e)
-	creacion := msg.GetPollCreationMessage()
-
-	if creacion.GetPollType() != waE2E.PollType_QUIZ {
-		t.Fatalf("tipo = %v, se esperaba QUIZ", creacion.GetPollType())
+	spec := encuestaSpec(e)
+	if !spec.Quiz || spec.Correct != 1 || spec.Options[spec.Correct] != "CDMX" {
+		t.Fatalf("quiz no conserva respuesta correcta: %+v", spec)
 	}
-	if got := creacion.GetCorrectAnswer().GetOptionName(); got != "CDMX" {
-		t.Fatalf("respuesta correcta = %q, los asteriscos no se quitan de la opción", got)
-	}
-	// La opción correcta tiene que ser la misma que aparece en la lista: si
-	// fuera un puntero copiado, WhatsApp la rechaza.
-	var misma bool
-	for _, o := range creacion.GetOptions() {
-		if o == creacion.GetCorrectAnswer() {
-			misma = true
-		}
-	}
-	if !misma {
-		t.Fatal("CorrectAnswer no apunta a una de las opciones enviadas")
-	}
-}
-
-func TestConstruirEncuestaMulti(t *testing.T) {
-	e, err := utilidades.ParsearEncuesta("multi ¿Qué llevas?|Hielo|Vasos|Botana")
+	e, err = utilidades.ParsearEncuesta("multi ¿Qué llevas?|Hielo|Vasos|Botana")
 	if err != nil {
 		t.Fatalf("no debería fallar: %v", err)
 	}
-	creacion := construirEncuesta(e).GetPollCreationMessage()
-	if n := creacion.GetSelectableOptionsCount(); n != 3 {
-		t.Fatalf("seleccionables = %d, con multi son todas", n)
-	}
-}
-
-// Sin MessageSecret los votos no se pueden descifrar: la encuesta se ve pero
-// no cuenta nada. Es el fallo más silencioso de toda la función.
-func TestConstruirEncuestaLlevaSecreto(t *testing.T) {
-	e, err := utilidades.ParsearEncuesta("¿Sí?|Sí|No")
-	if err != nil {
-		t.Fatalf("no debería fallar: %v", err)
-	}
-	for intento := 0; intento < 20; intento++ {
-		msg := construirEncuesta(e)
-		secreto := msg.GetMessageContextInfo().GetMessageSecret()
-		if len(secreto) != 32 {
-			t.Fatalf("secreto de %d bytes, se esperaban 32", len(secreto))
-		}
-	}
-}
-
-func TestSecretoAleatorioNoSeRepite(t *testing.T) {
-	a, b := secretoAleatorio(), secretoAleatorio()
-	if len(a) != 32 || len(b) != 32 {
-		t.Fatalf("longitudes %d y %d", len(a), len(b))
-	}
-	if proto.Equal(&waE2E.MessageContextInfo{MessageSecret: a},
-		&waE2E.MessageContextInfo{MessageSecret: b}) {
-		t.Fatal("dos encuestas seguidas llevan el mismo secreto")
+	if spec = encuestaSpec(e); spec.Selectable != 3 || spec.Quiz {
+		t.Fatalf("selección múltiple inesperada: %+v", spec)
 	}
 }
 
@@ -189,23 +125,13 @@ func TestSoloDigitos(t *testing.T) {
 
 // ─── a quién se refiere ─────────────────────────────────────────────────────
 
-// mencionarCon arma un contexto mínimo cuyo mensaje menciona a esos JID.
-func mencionarCon(jids ...types.JID) *bot.Context {
-	crudos := make([]string, len(jids))
-	for i, j := range jids {
-		crudos[i] = j.String()
-	}
-	evt := &events.Message{Message: &waE2E.Message{
-		ExtendedTextMessage: &waE2E.ExtendedTextMessage{
-			Text:        proto.String(".algo"),
-			ContextInfo: &waE2E.ContextInfo{MentionedJID: crudos},
-		},
-	}}
+func mencionarCon(jids ...wa.JID) *bot.Context {
+	evt := &wa.IncomingMessage{Parsed: wa.Parsed{Text: ".algo"}, Mentions: append([]wa.JID(nil), jids...)}
 	return &bot.Context{Event: evt}
 }
 
 func TestPersonaObjetivoUsaLaMención(t *testing.T) {
-	mencionado := types.NewJID("5215512345678", types.DefaultUserServer)
+	mencionado := wa.NewJID("5215512345678", wa.DefaultUserServer)
 	c := mencionarCon(mencionado)
 	got, ok := personaObjetivo(c)
 	if !ok {
@@ -219,17 +145,5 @@ func TestPersonaObjetivoUsaLaMención(t *testing.T) {
 func TestPersonaObjetivoSinNadie(t *testing.T) {
 	if _, ok := personaObjetivo(mencionarCon()); ok {
 		t.Fatal("sin menciones ni cita no debería salir nadie")
-	}
-}
-
-// ─── nombre verificado ──────────────────────────────────────────────────────
-
-func TestNombreVerificado(t *testing.T) {
-	if got := nombreVerificado(nil); got != "" {
-		t.Fatalf("nil → %q", got)
-	}
-	// Verificado sin detalles (el caso que rompía el build anterior).
-	if got := nombreVerificado(&types.VerifiedName{}); got != "" {
-		t.Fatalf("sin detalles → %q", got)
 	}
 }

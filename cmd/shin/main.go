@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"go.mau.fi/whatsmeow/types/events"
 	"shin-go/cmds" // sus init() registran los comandos
 
 	"github.com/pterm/pterm"
@@ -32,7 +31,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.20.0"
+var version = "0.21.0"
 
 func main() {
 	var (
@@ -198,18 +197,22 @@ func main() {
 	cmds.SetReferencia(db, client, log, ctx)
 
 	despachador := bot.NewDispatcher(router.Handle, cfg.Workers, cfg.QueueSize, log)
+	despachador.SetGroupHandler(func(ctx context.Context, evt *wa.GroupChange) {
+		bot.DispatchGroupInfo(ctx, db, log, evt)
+	})
 	despachador.Start(ctx)
 	defer despachador.Close()
 	bot.SetDispatcher(despachador)
 	log.Info(fmt.Sprintf("Mensajes en paralelo: %d a la vez · %d en espera",
 		cfg.Workers, cfg.QueueSize))
-	client.OnMessage(func(ctx context.Context, evt *events.Message) {
+	client.OnMessage(func(ctx context.Context, evt *wa.IncomingMessage) {
 		despachador.Submit(evt)
 	})
 	// Cambios de grupo (entradas, salidas, ascensos…): la bienvenida, la
 	// despedida y el refresco de la caché de permisos.
-	client.OnGroupInfo(func(ctx context.Context, evt *events.GroupInfo) {
-		bot.HandleGroupInfo(ctx, db, log, evt)
+	client.OnGroupInfo(func(ctx context.Context, evt *wa.GroupChange) {
+		bot.InvalidateGroupInfo(evt)
+		despachador.SubmitGroup(evt)
 	})
 
 	// Con sesión ya guardada el Login solo conecta: es el arranque de todos
@@ -251,24 +254,29 @@ func main() {
 		s := client.Queue.Snapshot()
 		d := despachador.Stats()
 		return web.Estado{
-			Conectado: client.WA.IsConnected(), Version: version,
+			Conectado: client.Connected(), Version: version,
 			Arranque:  client.StartedAt,
 			SentToday: s.SentToday, Budget: s.Budget, ModoLento: s.Slowed,
 			Anchor:  s.Anchor,
 			Workers: d.Workers, EnCola: d.EnCola, ColaMax: d.Cola,
 			Recibidos: int64(d.Recibidos), Procesados: int64(d.Procesados), Descartados: int64(d.Descartados),
+			Activos: d.Activos, GrupoEnCola: d.GrupoEnCola, GrupoColaMax: d.GrupoCola,
+			GrupoActivos:    d.GrupoActivos,
+			GruposRecibidos: int64(d.GruposRecibidos), GruposProcesados: int64(d.GruposProcesados),
+			GruposDescartados: int64(d.GruposDescartados),
+			EsperaPromedioMS:  d.EsperaPromedio.Milliseconds(), EsperaMaximaMS: d.EsperaMaxima.Milliseconds(),
+			TrabajoPromedioMS: d.DuracionPromedio.Milliseconds(), TrabajoMaximoMS: d.DuracionMaxima.Milliseconds(),
 		}
 	}, log.Info)
-	panel.Arrancar(ctx)
+	if err := panel.Arrancar(ctx); err != nil {
+		log.Warn("no se pudo iniciar el panel web: " + err.Error())
+	}
 
 	log.Ok("Shin-MD-Go en marcha. Ctrl+C para salir.")
 
 	// La caja que cierra el arranque, como en el JS: cuenta, comandos,
 	// prefijos, vitales del equipo y la dirección del panel web.
-	cuenta := client.WA.Store.PushName
-	if cuenta == "" && client.WA.Store.ID != nil {
-		cuenta = client.WA.Store.ID.User
-	}
+	cuenta := client.AccountName()
 	consola.PanelListo(os.Stdout, consola.Listo{
 		Version:  version,
 		Cuenta:   cuenta,

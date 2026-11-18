@@ -52,19 +52,30 @@ type Config struct {
 // Estado es la foto que el panel vende. La rellena el main con un callback
 // para no importar internal/bot ni wa desde aquí (web no les tira).
 type Estado struct {
-	Conectado   bool
-	Version     string
-	Arranque    time.Time
-	SentToday   int
-	Budget      int
-	ModoLento   bool
-	Anchor      time.Time
-	Workers     int
-	EnCola      int
-	ColaMax     int
-	Recibidos   int64
-	Procesados  int64
-	Descartados int64
+	Conectado         bool
+	Version           string
+	Arranque          time.Time
+	SentToday         int
+	Budget            int
+	ModoLento         bool
+	Anchor            time.Time
+	Workers           int
+	EnCola            int
+	ColaMax           int
+	Activos           int64
+	Recibidos         int64
+	Procesados        int64
+	Descartados       int64
+	GrupoEnCola       int
+	GrupoColaMax      int
+	GrupoActivos      int64
+	GruposRecibidos   int64
+	GruposProcesados  int64
+	GruposDescartados int64
+	EsperaPromedioMS  int64
+	EsperaMaximaMS    int64
+	TrabajoPromedioMS int64
+	TrabajoMaximoMS   int64
 }
 
 // Server es el panel. Log es opcional (nil → nada).
@@ -116,6 +127,7 @@ func (s *Server) Arrancar(ctx context.Context) error {
 	mux.HandleFunc("/health", s.health)
 	mux.HandleFunc("/queue", s.queue)
 	mux.HandleFunc("/memoria", s.memoria)
+	mux.HandleFunc("/metrics", s.metrics)
 	s.srv = &http.Server{Addr: s.Dir, Handler: s.conter(s.middleware(mux))}
 
 	oyente, err := net.Listen("tcp", s.Dir)
@@ -252,26 +264,50 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 			"pendientes": e.EnCola,
 		},
 		"dispatcher": map[string]any{
-			"workers":   e.Workers,
-			"colaCap":   e.ColaMax,
-			"pending":   e.EnCola,
-			"recibidos": e.Recibidos,
+			"workers":           e.Workers,
+			"colaCap":           e.ColaMax,
+			"pending":           e.EnCola,
+			"activos":           e.Activos,
+			"recibidos":         e.Recibidos,
+			"procesados":        e.Procesados,
+			"descartados":       e.Descartados,
+			"grupoCap":          e.GrupoColaMax,
+			"grupoPending":      e.GrupoEnCola,
+			"grupoActivos":      e.GrupoActivos,
+			"gruposRecibidos":   e.GruposRecibidos,
+			"gruposProcesados":  e.GruposProcesados,
+			"gruposDescartados": e.GruposDescartados,
+			"esperaPromedioMS":  e.EsperaPromedioMS,
+			"esperaMaximaMS":    e.EsperaMaximaMS,
+			"trabajoPromedioMS": e.TrabajoPromedioMS,
+			"trabajoMaximoMS":   e.TrabajoMaximoMS,
 		},
 		"memoryMB": rssMB(),
 	})
 }
 
-// queue: la cola antiban en detalle.
+// queue: la cola antiban y el repartidor por conversación en detalle.
 func (s *Server) queue(w http.ResponseWriter, r *http.Request) {
 	e := s.estado()
 	escribir(w, map[string]any{
-		"ok":          true,
-		"queueLen":    e.EnCola,
-		"queueMax":    e.ColaMax,
-		"workers":     e.Workers,
-		"recibidos":   e.Recibidos,
-		"procesados":  e.Procesados,
-		"descartados": e.Descartados,
+		"ok":                true,
+		"queueLen":          e.EnCola,
+		"queueMax":          e.ColaMax,
+		"workers":           e.Workers,
+		"activos":           e.Activos,
+		"recibidos":         e.Recibidos,
+		"procesados":        e.Procesados,
+		"descartados":       e.Descartados,
+		"grupoLen":          e.GrupoEnCola,
+		"grupoMax":          e.GrupoColaMax,
+		"grupoActivos":      e.GrupoActivos,
+		"gruposRecibidos":   e.GruposRecibidos,
+		"gruposProcesados":  e.GruposProcesados,
+		"gruposDescartados": e.GruposDescartados,
+		"esperaPromedioMS":  e.EsperaPromedioMS,
+		"esperaMaximaMS":    e.EsperaMaximaMS,
+		"trabajoPromedioMS": e.TrabajoPromedioMS,
+		"trabajoMaximoMS":   e.TrabajoMaximoMS,
 		"antiban": map[string]any{
 			"sentToday": e.SentToday,
 			"budget":    e.Budget,
@@ -302,15 +338,25 @@ func (s *Server) memoria(w http.ResponseWriter, r *http.Request) {
 func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	e := s.estado()
 	escribir(w, map[string]any{
-		"ok":          true,
-		"uptimeSec":   int(time.Since(e.Arranque).Seconds()),
-		"queueSent":   e.SentToday,
-		"queuePend":   e.EnCola,
-		"descartados": e.Descartados,
-		"rssMB":       rssMB(),
-		"goroutines":  runtime.NumGoroutine(),
-		"goVersion":   runtime.Version(),
-		"state":       estadoConn(e.Conectado),
+		"ok":                true,
+		"uptimeSec":         int(time.Since(e.Arranque).Seconds()),
+		"queueSent":         e.SentToday,
+		"queuePend":         e.EnCola,
+		"activos":           e.Activos,
+		"procesados":        e.Procesados,
+		"descartados":       e.Descartados,
+		"grupoPend":         e.GrupoEnCola,
+		"grupoActivos":      e.GrupoActivos,
+		"gruposProcesados":  e.GruposProcesados,
+		"gruposDescartados": e.GruposDescartados,
+		"esperaPromedioMS":  e.EsperaPromedioMS,
+		"esperaMaximaMS":    e.EsperaMaximaMS,
+		"trabajoPromedioMS": e.TrabajoPromedioMS,
+		"trabajoMaximoMS":   e.TrabajoMaximoMS,
+		"rssMB":             rssMB(),
+		"goroutines":        runtime.NumGoroutine(),
+		"goVersion":         runtime.Version(),
+		"state":             estadoConn(e.Conectado),
 	})
 }
 

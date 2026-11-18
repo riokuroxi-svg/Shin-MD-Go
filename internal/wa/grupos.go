@@ -58,41 +58,41 @@ func groupError(err error) error {
 }
 
 // Kick saca a alguien del grupo.
-func (c *Client) Kick(ctx context.Context, group types.JID, who types.JID) error {
+func (c *Client) Kick(ctx context.Context, group JID, who JID) error {
 	if group.IsEmpty() || who.IsEmpty() {
 		return errors.New("grupo o usuario vacío")
 	}
-	_, err := c.WA.UpdateGroupParticipants(ctx, group, []types.JID{who}, whatsmeow.ParticipantChangeRemove)
+	_, err := c.waClient.UpdateGroupParticipants(ctx, group.whatsmeow(), []types.JID{who.whatsmeow()}, whatsmeow.ParticipantChangeRemove)
 	return groupError(err)
 }
 
 // Promote / Demote cambian el rol de un miembro.
-func (c *Client) Promote(ctx context.Context, group, who types.JID) error {
-	_, err := c.WA.UpdateGroupParticipants(ctx, group, []types.JID{who}, whatsmeow.ParticipantChangePromote)
+func (c *Client) Promote(ctx context.Context, group, who JID) error {
+	_, err := c.waClient.UpdateGroupParticipants(ctx, group.whatsmeow(), []types.JID{who.whatsmeow()}, whatsmeow.ParticipantChangePromote)
 	return groupError(err)
 }
 
-func (c *Client) Demote(ctx context.Context, group, who types.JID) error {
-	_, err := c.WA.UpdateGroupParticipants(ctx, group, []types.JID{who}, whatsmeow.ParticipantChangeDemote)
+func (c *Client) Demote(ctx context.Context, group, who JID) error {
+	_, err := c.waClient.UpdateGroupParticipants(ctx, group.whatsmeow(), []types.JID{who.whatsmeow()}, whatsmeow.ParticipantChangeDemote)
 	return groupError(err)
 }
 
 // SetAnnounce cierra (true) o abre (false) el grupo. Es una sola llamada, no
 // dos comandos distintos: el JS tenía `.open` y `.close` separados y con la
 // misma lógica duplicada.
-func (c *Client) SetAnnounce(ctx context.Context, group types.JID, closed bool) error {
-	return groupError(c.WA.SetGroupAnnounce(ctx, group, closed))
+func (c *Client) SetAnnounce(ctx context.Context, group JID, closed bool) error {
+	return groupError(c.waClient.SetGroupAnnounce(ctx, group.whatsmeow(), closed))
 }
 
 // InviteLink devuelve el enlace del grupo. Con `reset` lo restablece (el viejo
 // deja de servir), que es el `.revoke` del bot de JS.
-func (c *Client) InviteLink(ctx context.Context, group types.JID, reset bool) (string, error) {
-	link, err := c.WA.GetGroupInviteLink(ctx, group, reset)
+func (c *Client) InviteLink(ctx context.Context, group JID, reset bool) (string, error) {
+	link, err := c.waClient.GetGroupInviteLink(ctx, group.whatsmeow(), reset)
 	return link, groupError(err)
 }
 
 // SetGroupName / SetGroupTopic / SetGroupPhoto con los topes ya aplicados.
-func (c *Client) SetGroupName(ctx context.Context, group types.JID, name string) error {
+func (c *Client) SetGroupName(ctx context.Context, group JID, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return errors.New("el nombre no puede quedar vacío")
@@ -100,33 +100,33 @@ func (c *Client) SetGroupName(ctx context.Context, group types.JID, name string)
 	if utf8.RuneCountInString(name) > MaxGroupName {
 		return fmt.Errorf("el nombre no puede pasar de %d caracteres", MaxGroupName)
 	}
-	return groupError(c.WA.SetGroupName(ctx, group, name))
+	return groupError(c.waClient.SetGroupName(ctx, group.whatsmeow(), name))
 }
 
 // SetGroupTopic pone la descripción. whatsmeow pide el id de la anterior: se
 // lee del grupo y si falla se manda vacío (WhatsApp lo acepta así).
-func (c *Client) SetGroupTopic(ctx context.Context, group types.JID, topic string) error {
+func (c *Client) SetGroupTopic(ctx context.Context, group JID, topic string) error {
 	topic = strings.TrimSpace(topic)
 	if utf8.RuneCountInString(topic) > MaxGroupTopic {
 		return fmt.Errorf("la descripción no puede pasar de %d caracteres", MaxGroupTopic)
 	}
 
 	prevID := ""
-	if info, err := c.WA.GetGroupInfo(ctx, group); err == nil {
+	if info, err := c.waClient.GetGroupInfo(ctx, group.whatsmeow()); err == nil {
 		prevID = info.TopicID
 	}
-	return groupError(c.WA.SetGroupTopic(ctx, group, prevID, "", topic))
+	return groupError(c.waClient.SetGroupTopic(ctx, group.whatsmeow(), prevID, "", topic))
 }
 
 // SetGroupPhoto cambia la imagen del grupo.
-func (c *Client) SetGroupPhoto(ctx context.Context, group types.JID, photo []byte) error {
+func (c *Client) SetGroupPhoto(ctx context.Context, group JID, photo []byte) error {
 	if len(photo) == 0 {
 		return errors.New("la imagen está vacía")
 	}
 	if len(photo) > MaxGroupPhoto {
 		return fmt.Errorf("la imagen no puede pasar de %d KB", MaxGroupPhoto/1024)
 	}
-	_, err := c.WA.SetGroupPhoto(ctx, group, photo)
+	_, err := c.waClient.SetGroupPhoto(ctx, group.whatsmeow(), photo)
 	return groupError(err)
 }
 
@@ -135,7 +135,7 @@ func (c *Client) SetGroupPhoto(ctx context.Context, group types.JID, photo []byt
 // Va como mensaje extendido con `mentionedJID`: sin eso, "@52155…" se queda en
 // texto plano y el mencionado no recibe notificación, que es justo lo que
 // necesita un tagall o un aviso de advertencia.
-func (c *Client) SendMentions(ctx context.Context, chat types.JID, text string, mentions []types.JID, priority bool) error {
+func (c *Client) SendMentions(ctx context.Context, chat JID, text string, mentions []JID, priority bool) error {
 	if len(mentions) == 0 {
 		return c.SendText(ctx, chat, text, priority)
 	}
@@ -155,7 +155,7 @@ func (c *Client) SendMentions(ctx context.Context, chat types.JID, text string, 
 		ContextInfo: &waE2E.ContextInfo{MentionedJID: lista},
 	}}
 	return c.Queue.Do(ctx, len([]rune(text)), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
@@ -166,15 +166,28 @@ const MaxMentions = 50
 
 // SendWelcome manda el mensaje de bienvenida/despedida mencionando a quien
 // entró o salió.
-func (c *Client) SendWelcome(ctx context.Context, chat types.JID, text string, who types.JID) error {
-	return c.SendMentions(ctx, chat, text, []types.JID{who}, true)
+func (c *Client) SendWelcome(ctx context.Context, chat JID, text string, who JID) error {
+	return c.SendMentions(ctx, chat, text, []JID{who}, true)
 }
 
-// GroupInfo devuelve la info del grupo sin caché (los comandos de admin
-// necesitan el estado real justo antes de actuar).
-func (c *Client) GroupInfo(ctx context.Context, group types.JID) (*types.GroupInfo, error) {
-	info, err := c.WA.GetGroupInfo(ctx, group)
-	return info, groupError(err)
+// GroupInfo devuelve la foto interna del grupo; el tipo externo no escapa del adaptador.
+func (c *Client) GroupInfo(ctx context.Context, group JID) (*GroupInfo, error) {
+	info, err := c.waClient.GetGroupInfo(ctx, group.whatsmeow())
+	if err != nil {
+		return nil, groupError(err)
+	}
+	out := &GroupInfo{
+		JID: jidFromWhatsmeow(info.JID), OwnerJID: jidFromWhatsmeow(info.OwnerJID),
+		Name: info.Name, Topic: info.Topic, IsAnnounce: info.IsAnnounce,
+		Participants: make([]GroupParticipant, 0, len(info.Participants)),
+	}
+	for _, p := range info.Participants {
+		out.Participants = append(out.Participants, GroupParticipant{
+			JID: jidFromWhatsmeow(p.JID), PhoneNumber: jidFromWhatsmeow(p.PhoneNumber), LID: jidFromWhatsmeow(p.LID),
+			IsAdmin: p.IsAdmin, IsSuperAdmin: p.IsSuperAdmin,
+		})
+	}
+	return out, nil
 }
 
 // esperaDescarga: tope de una descarga de medios. Un vídeo de 16 MB por una
@@ -190,14 +203,14 @@ const esperaDescarga = 45 * time.Second
 // una gorutina colgada para siempre y, con cuatro workers, cuatro descargas
 // atascadas dejan al bot sin carriles hasta reiniciar. Ese es el fallo clásico
 // de "el bot sigue vivo pero ya no contesta".
-func (c *Client) DownloadMedia(ctx context.Context, d whatsmeow.DownloadableMessage) ([]byte, error) {
-	if d == nil {
+func (c *Client) DownloadMedia(ctx context.Context, medio Medio) ([]byte, error) {
+	if medio.data == nil {
 		return nil, errors.New("no hay nada que descargar en ese mensaje")
 	}
 	ctx, cancelar := context.WithTimeout(ctx, esperaDescarga)
 	defer cancelar()
 
-	data, err := c.WA.Download(ctx, d)
+	data, err := c.waClient.Download(ctx, medio.data)
 	if err != nil {
 		if ctx.Err() != nil {
 			return nil, fmt.Errorf("la descarga tardó más de %s y se canceló", esperaDescarga)
@@ -217,7 +230,7 @@ const esperaEntreExpulsiones = 3 * time.Second
 // KickLote expulsa a varios, de uno en uno y con pausa. Devuelve cuántos
 // salieron y los errores. Se usa solo desde comandos que lo piden de forma
 // explícita (nunca automático): es la operación más peligrosa del bot.
-func (c *Client) KickLote(ctx context.Context, group types.JID, quienes []types.JID, max int) (int, []string, error) {
+func (c *Client) KickLote(ctx context.Context, group JID, quienes []JID, max int) (int, []string, error) {
 	if max <= 0 {
 		max = 0 // sin lote
 	}
@@ -253,10 +266,10 @@ const maxRecientes = 64
 
 var (
 	muRecientes sync.Mutex
-	recientes   = map[types.JID][]string{}
+	recientes   = map[JID][]string{}
 )
 
-func (c *Client) recuerdaEnviado(chat types.JID, id string) {
+func (c *Client) recuerdaEnviado(chat JID, id string) {
 	if id == "" {
 		return
 	}
@@ -272,7 +285,7 @@ func (c *Client) recuerdaEnviado(chat types.JID, id string) {
 
 // LimpiarMios revoca hasta n mensajes propios recientes en el chat y dice
 // cuántos borró de verdad (el JS también solo podía con los suyos).
-func (c *Client) LimpiarMios(ctx context.Context, chat types.JID, n int) (int, error) {
+func (c *Client) LimpiarMios(ctx context.Context, chat JID, n int) (int, error) {
 	muRecientes.Lock()
 	lista := recientes[chat]
 	muRecientes.Unlock()
@@ -286,7 +299,7 @@ func (c *Client) LimpiarMios(ctx context.Context, chat types.JID, n int) (int, e
 	borrados := 0
 	for i := len(ultimos) - 1; i >= 0; i-- {
 		if err := c.Queue.Do(ctx, 1, true, func() error {
-			_, err := c.WA.RevokeMessage(ctx, chat, ultimos[i])
+			_, err := c.waClient.RevokeMessage(ctx, chat.whatsmeow(), ultimos[i])
 			return err
 		}); err == nil {
 			borrados++

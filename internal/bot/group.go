@@ -15,8 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/wa"
 )
 
@@ -26,7 +24,7 @@ import (
 const groupTTL = time.Minute
 
 type groupEntry struct {
-	info *types.GroupInfo
+	info *wa.GroupInfo
 	at   time.Time
 }
 
@@ -50,7 +48,7 @@ func NewGroupCache(client *wa.Client, ids *wa.Resolver) *GroupCache {
 }
 
 // Info devuelve la información del grupo (de caché si está fresca).
-func (g *GroupCache) Info(ctx context.Context, jid types.JID) (*types.GroupInfo, error) {
+func (g *GroupCache) Info(ctx context.Context, jid wa.JID) (*wa.GroupInfo, error) {
 	if g == nil || g.client == nil || jid.IsEmpty() {
 		return nil, ErrNotAllowed
 	}
@@ -64,7 +62,7 @@ func (g *GroupCache) Info(ctx context.Context, jid types.JID) (*types.GroupInfo,
 	}
 	g.mu.Unlock()
 
-	info, err := g.client.WA.GetGroupInfo(ctx, jid)
+	info, err := g.client.GroupInfo(ctx, jid)
 	if err != nil {
 		// Si la red falla pero hay una copia vieja, es mejor usarla que decir
 		// que el grupo no existe (un corte de red no debe romper los permisos).
@@ -87,7 +85,7 @@ func (g *GroupCache) Info(ctx context.Context, jid types.JID) (*types.GroupInfo,
 }
 
 // Invalidate borra la copia de un grupo (tras un kick, promote, etc.).
-func (g *GroupCache) Invalidate(jid types.JID) {
+func (g *GroupCache) Invalidate(jid wa.JID) {
 	if g == nil {
 		return
 	}
@@ -97,7 +95,7 @@ func (g *GroupCache) Invalidate(jid types.JID) {
 }
 
 // IsAdmin: ¿el usuario es admin (o creador) del grupo?
-func (g *GroupCache) IsAdmin(ctx context.Context, group, user, alt types.JID) bool {
+func (g *GroupCache) IsAdmin(ctx context.Context, group, user, alt wa.JID) bool {
 	info, err := g.Info(ctx, group)
 	if err != nil {
 		return false
@@ -107,7 +105,7 @@ func (g *GroupCache) IsAdmin(ctx context.Context, group, user, alt types.JID) bo
 
 // IsBotAdmin: ¿el propio bot es admin? Lo necesitan antilink (para borrar) y
 // los comandos de administración.
-func (g *GroupCache) IsBotAdmin(ctx context.Context, group types.JID) bool {
+func (g *GroupCache) IsBotAdmin(ctx context.Context, group wa.JID) bool {
 	if g == nil || g.client == nil {
 		return false
 	}
@@ -116,24 +114,22 @@ func (g *GroupCache) IsBotAdmin(ctx context.Context, group types.JID) bool {
 		return false
 	}
 
-	own := types.EmptyJID
-	if id := g.client.WA.Store.ID; id != nil {
-		own = id.ToNonAD()
-	}
+	own := wa.JID{}
+	own = g.client.OwnID()
 	return participantIsAdmin(ctx, g.ids, info, own, g.client.OwnLID())
 }
 
 // participantIsAdmin compara el usuario contra cada participante por todas
 // las formas posibles: el JID del mensaje, su alternativo, el teléfono y el
 // LID guardados en la identidad.
-func participantIsAdmin(ctx context.Context, ids *wa.Resolver, info *types.GroupInfo, user, alt types.JID) bool {
+func participantIsAdmin(ctx context.Context, ids *wa.Resolver, info *wa.GroupInfo, user, alt wa.JID) bool {
 	if info == nil || user.IsEmpty() {
 		return false
 	}
 
 	// Si el grupo está en modo LID, los participantes vienen con LID.
 	want := make(map[string]bool, 4)
-	add := func(j types.JID) {
+	add := func(j wa.JID) {
 		if !j.IsEmpty() && j.User != "" {
 			want[j.User] = true
 		}
@@ -150,7 +146,7 @@ func participantIsAdmin(ctx context.Context, ids *wa.Resolver, info *types.Group
 		if !(p.IsAdmin || p.IsSuperAdmin) {
 			continue
 		}
-		for _, candidate := range []types.JID{p.JID, p.PhoneNumber, p.LID} {
+		for _, candidate := range []wa.JID{p.JID, p.PhoneNumber, p.LID} {
 			if !candidate.IsEmpty() && want[candidate.User] {
 				return true
 			}

@@ -20,7 +20,6 @@ package cmds
 
 import (
 	"context"
-	crand "crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -29,10 +28,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/types"
-	"google.golang.org/protobuf/proto"
 
 	"shin-go/internal/bot"
 	"shin-go/internal/store"
@@ -272,7 +267,7 @@ func avisarVencidos() {
 		return
 	}
 	for _, r := range vencidos {
-		chat, err := types.ParseJID(r.ChatID)
+		chat, err := wa.ParseJID(r.ChatID)
 		if err != nil {
 			continue
 		}
@@ -336,27 +331,10 @@ func registerSay() {
 
 // textoCitado saca el texto del mensaje al que responden, si lo hay.
 func textoCitado(c *bot.Context) string {
-	if c.Event == nil {
+	if c.Event == nil || c.Event.Quoted == nil {
 		return ""
 	}
-	ci := wa.ContextInfo(wa.Unwrap(c.Event.Message))
-	if ci == nil || ci.GetQuotedMessage() == nil {
-		return ""
-	}
-	citado := wa.Unwrap(ci.GetQuotedMessage())
-	switch {
-	case citado.GetConversation() != "":
-		return citado.GetConversation()
-	case citado.GetExtendedTextMessage() != nil:
-		return citado.GetExtendedTextMessage().GetText()
-	case citado.GetImageMessage() != nil:
-		return citado.GetImageMessage().GetCaption()
-	case citado.GetVideoMessage() != nil:
-		return citado.GetVideoMessage().GetCaption()
-	case citado.GetDocumentMessage() != nil:
-		return citado.GetDocumentMessage().GetCaption()
-	}
-	return ""
+	return c.Event.Quoted.Text
 }
 
 // ─── .encuesta ──────────────────────────────────────────────────────────────
@@ -373,8 +351,7 @@ func registerEncuesta() {
 			if err != nil {
 				return c.Reply("《✧》 " + err.Error() + "\n\n> Quiz: marca la buena con *asterisco*\n> Varias respuestas: escribe *multi* delante")
 			}
-			msg := construirEncuesta(e)
-			if _, err := c.Bot.SendProto(c.Ctx, c.Chat, msg, c.Priority()); err != nil {
+			if err := c.Bot.SendPollSpec(c.Ctx, c.Chat, encuestaSpec(e), c.Priority()); err != nil {
 				return c.Reply("✕ No pude mandar la encuesta: " + bot.Esc(err.Error()))
 			}
 			return nil
@@ -382,41 +359,13 @@ func registerEncuesta() {
 	})
 }
 
-// construirEncuesta arma el protobuf. Se separa para poder probarlo sin red.
-//
-// El MessageSecret es obligatorio: sin él, los votos no se pueden descifrar y
-// la encuesta se ve pero no cuenta nada.
-func construirEncuesta(e *utilidades.Encuesta) *waE2E.Message {
-	opciones := make([]*waE2E.PollCreationMessage_Option, len(e.Opciones))
-	for i, o := range e.Opciones {
-		opciones[i] = &waE2E.PollCreationMessage_Option{OptionName: proto.String(o)}
+// encuestaSpec convierte el resultado del parser a un contrato interno del
+// adaptador; aquí no se construye ni se importa ningún tipo Protobuf.
+func encuestaSpec(e *utilidades.Encuesta) wa.PollSpec {
+	return wa.PollSpec{
+		Question: e.Pregunta, Options: append([]string(nil), e.Opciones...),
+		Selectable: e.Seleccionables, Quiz: e.Tipo == utilidades.TipoQuiz, Correct: e.Correcta,
 	}
-	creacion := &waE2E.PollCreationMessage{
-		Name:                   proto.String(e.Pregunta),
-		Options:                opciones,
-		SelectableOptionsCount: proto.Uint32(uint32(e.Seleccionables)),
-	}
-	if e.Tipo == utilidades.TipoQuiz && e.Correcta >= 0 && e.Correcta < len(opciones) {
-		creacion.PollType = waE2E.PollType_QUIZ.Enum()
-		creacion.CorrectAnswer = opciones[e.Correcta]
-	}
-	return &waE2E.Message{
-		PollCreationMessage: creacion,
-		MessageContextInfo: &waE2E.MessageContextInfo{
-			MessageSecret: secretoAleatorio(),
-		},
-	}
-}
-
-// secretoAleatorio son 32 bytes de crypto/rand. Si fallara (no debería), se
-// devuelve nil y la encuesta saldría sin poder contar votos: por eso se comprueba
-// con una prueba.
-func secretoAleatorio() []byte {
-	b := make([]byte, 32)
-	if _, err := crand.Read(b); err != nil {
-		return nil
-	}
-	return b
 }
 
 // ─── .pfp ───────────────────────────────────────────────────────────────────
@@ -481,7 +430,7 @@ func registerWAStalk() {
 				"《⊛》 *Perfil público*",
 				"│ ◈ Número › *+" + bot.Esc(jid.User) + "*",
 			}
-			if nombre := nombreVerificado(info.VerifiedName); nombre != "" {
+			if nombre := strings.TrimSpace(info.VerifiedName); nombre != "" {
 				lineas = append(lineas, "│ ◈ Verificado › *"+bot.Esc(nombre)+"*")
 			}
 			if info.Status != "" {
@@ -518,13 +467,13 @@ func registerReadViewOnce() {
 		Run: func(c *bot.Context) error {
 			// wa.MedioDe ya desenvuelve ViewOnce/ViewOnceV2 y también mira el
 			// mensaje citado, así que aquí no hay nada especial que hacer.
-			medio, ok := wa.MedioDe(c.Event.Message)
+			medio, ok := wa.MedioDeEntrada(c.Event)
 			if !ok {
 				return c.Reply(fmt.Sprintf(
 					"《✧》 Cita un mensaje de *ver una vez* (foto, vídeo o audio) y escribe *%sread*.",
 					c.Bot.FirstPrefix()))
 			}
-			datos, err := c.Bot.DownloadMedia(c.Ctx, medio.Data)
+			datos, err := c.Bot.DownloadMedia(c.Ctx, medio)
 			if err != nil {
 				return c.Reply("《✧》 No pude descargar ese mensaje: puede que ya se haya borrado.")
 			}
@@ -647,38 +596,14 @@ func nombreDeArchivo(ruta, tipo string) string {
 
 // personaObjetivo resuelve de quién se habla: la primera mención, el autor del
 // mensaje citado, o (si no) nadie.
-func personaObjetivo(c *bot.Context) (types.JID, bool) {
+func personaObjetivo(c *bot.Context) (wa.JID, bool) {
 	if menciones := c.Mentioned(); len(menciones) > 0 {
 		return menciones[0].ToNonAD(), true
 	}
-	if c.Event == nil {
-		return types.JID{}, false
+	if c.Event != nil && c.Event.Quoted != nil && !c.Event.Quoted.Participant.IsEmpty() {
+		return c.Event.Quoted.Participant.ToNonAD(), true
 	}
-	ci := wa.ContextInfo(wa.Unwrap(c.Event.Message))
-	if ci == nil {
-		return types.JID{}, false
-	}
-	participante := ci.GetParticipant()
-	if participante == "" {
-		return types.JID{}, false
-	}
-	jid, err := types.ParseJID(participante)
-	if err != nil {
-		return types.JID{}, false
-	}
-	return jid.ToNonAD(), true
-}
-
-// nombreVerificado saca el nombre de empresa verificado, si lo tiene.
-//
-// whatsmeow lo guarda dentro del certificado (`Details.VerifiedName`), no en un
-// campo directo: mirar `VerifiedName != nil` no basta, porque el certificado
-// puede venir sin detalles.
-func nombreVerificado(v *types.VerifiedName) string {
-	if v == nil || v.Details == nil {
-		return ""
-	}
-	return strings.TrimSpace(v.Details.GetVerifiedName())
+	return wa.JID{}, false
 }
 
 // soloDigitos deja el número limpio de todo lo que no sea dígito.

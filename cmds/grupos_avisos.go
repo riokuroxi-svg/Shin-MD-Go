@@ -23,9 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-	"go.mau.fi/whatsmeow/types/events"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/store"
 	"shin-go/internal/wa"
@@ -78,7 +75,7 @@ func hookActividad(c *bot.Context, parsed wa.Parsed) bool {
 // está activo, el que escribe NO es admin y el bot SÍ es admin (sin permiso de
 // borrar, intentarlo solo genera errores y spam).
 func hookAntiStatus(c *bot.Context, parsed wa.Parsed) bool {
-	if !c.IsGroup || c.Event == nil || c.Event.Message == nil {
+	if !c.IsGroup || c.Event == nil || !c.Event.HasContent {
 		return false
 	}
 	activo, err := c.DB.Flag(c.Ctx, c.Chat.String(), store.KeyAntiStatus, false)
@@ -89,45 +86,29 @@ func hookAntiStatus(c *bot.Context, parsed wa.Parsed) bool {
 		return false
 	}
 
-	msg := wa.Unwrap(c.Event.Message)
-	if msg == nil {
-		return false
-	}
-
 	// Caso 1: este mismo mensaje ES un estado de grupo.
-	if msg.GetGroupStatusMentionMessage() != nil {
-		return borrarEstado(c, c.Event.Info.ID, c.Sender)
+	if c.Event.IsGroupStatusMention {
+		return borrarEstado(c, c.Event.ID, c.Sender)
 	}
 
-	// Caso 2: el mensaje cita un estado de grupo.
-	ci := wa.ContextInfo(msg)
-	if ci == nil {
+	// Caso 2: el mensaje cita un estado de grupo. El adaptador ya extrajo
+	// referencia y participante, sin exponer ContextInfo/Protobuf al comando.
+	if c.Event.Quoted == nil || !c.Event.Quoted.GroupStatusMention {
 		return false
 	}
-	citado := ci.GetQuotedMessage()
-	if citado == nil {
-		return false
-	}
-	inner := wa.Unwrap(citado)
-	if inner == nil || inner.GetGroupStatusMentionMessage() == nil {
-		return false
-	}
-
 	autor := c.Sender
-	if p := ci.GetParticipant(); p != "" {
-		if j, err := types.ParseJID(p); err == nil {
-			autor = j.ToNonAD()
-		}
+	if !c.Event.Quoted.Participant.IsEmpty() {
+		autor = c.Event.Quoted.Participant
 	}
-	borrarEstado(c, types.MessageID(ci.GetStanzaID()), autor)
+	borrarEstado(c, c.Event.Quoted.ID, autor)
 	// Y el mensaje que lo cita (el "comando" del que abusa) también se va.
-	borrarEstado(c, c.Event.Info.ID, c.Sender)
+	borrarEstado(c, c.Event.ID, c.Sender)
 	return true
 }
 
 // borrarEstado borra el mensaje y apunta la advertencia. Devuelve true si el
 // hook ya atendió el mensaje.
-func borrarEstado(c *bot.Context, id types.MessageID, autor types.JID) bool {
+func borrarEstado(c *bot.Context, id string, autor wa.JID) bool {
 	if id == "" {
 		return false
 	}
@@ -150,14 +131,14 @@ func borrarEstado(c *bot.Context, id types.MessageID, autor types.JID) bool {
 			c.Groups.Invalidate(c.Chat)
 			_ = c.Bot.SendMentions(c.Ctx, c.Chat,
 				fmt.Sprintf("✐ @%s compartió un estado y alcanzó el límite de advertencias: expulsado.",
-					autor.User), []types.JID{autor}, true)
+					autor.User), []wa.JID{autor}, true)
 			return true
 		}
 	}
 
 	_ = c.Bot.SendMentions(c.Ctx, c.Chat,
 		fmt.Sprintf("✐ @%s: los estados no se comparten en este grupo (advertencia %d).",
-			autor.User, total), []types.JID{autor}, true)
+			autor.User, total), []wa.JID{autor}, true)
 	return true
 }
 
@@ -320,7 +301,7 @@ func registerWelcomeCmds() {
 // también cuando alguien cambia de nombre o de foto. Aquí solo se mira
 // Join/Leave, y si el mismo usuario aparece en los dos (entrar y salir en la
 // misma operación) se manda solo uno, para no escribir dos mensajes seguidos.
-func onGroupChange(ctx context.Context, db *store.Store, log *xlog.Logger, evt *events.GroupInfo) {
+func onGroupChange(ctx context.Context, db *store.Store, log *xlog.Logger, evt *wa.GroupChange) {
 	if evt == nil || evt.JID.IsEmpty() {
 		return
 	}
@@ -350,7 +331,7 @@ func onGroupChange(ctx context.Context, db *store.Store, log *xlog.Logger, evt *
 
 // groupInfoDe lee el grupo desde el router (el oyente de eventos no tiene un
 // Context de mensaje del que tirar).
-func groupInfoDe(ctx context.Context, db *store.Store, evt *events.GroupInfo) (*types.GroupInfo, error) {
+func groupInfoDe(ctx context.Context, db *store.Store, evt *wa.GroupChange) (*wa.GroupInfo, error) {
 	r := bot.ActiveRouter()
 	if r == nil {
 		return nil, fmt.Errorf("sin router")
@@ -362,8 +343,8 @@ func groupInfoDe(ctx context.Context, db *store.Store, evt *events.GroupInfo) (*
 // está activo. Se manda de una en una, con la cola anti-ban de por medio: en
 // un grupo grande entran varios a la vez y una ráfaga de avisos es una firma
 // de bot.
-func avisar(ctx context.Context, db *store.Store, log *xlog.Logger, evt *events.GroupInfo,
-	quienes []types.JID, claveFlag, claveTexto string, esBienvenida bool,
+func avisar(ctx context.Context, db *store.Store, log *xlog.Logger, evt *wa.GroupChange,
+	quienes []wa.JID, claveFlag, claveTexto string, esBienvenida bool,
 	nombreGrupo string, miembros int) {
 
 	chatID := evt.JID.String()

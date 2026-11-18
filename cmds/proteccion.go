@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
 	"shin-go/internal/wa"
 )
@@ -62,7 +60,7 @@ func init() {
 		allow, warn := antilinkGuard.Allow(c.Key())
 
 		borrado := true
-		if err := c.Bot.DeleteMessage(c.Ctx, c.Chat, c.Sender, c.Event.Info.ID); err != nil {
+		if err := c.Bot.DeleteMessage(c.Ctx, c.Chat, c.Sender, c.Event.ID); err != nil {
 			borrado = false
 			c.Log.Warn("antilink: no se pudo borrar el mensaje: " + err.Error())
 		}
@@ -308,6 +306,6 @@ func recompensaAFK(marca string, ahora time.Time) (int64, string) {
 }
 
 // shortJID deja el número o el LID sin el dominio, para los avisos.
-func shortJID(jid types.JID) string {
+func shortJID(jid wa.JID) string {
 	return jid.User
 }

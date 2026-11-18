@@ -9,9 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"go.mau.fi/whatsmeow/types"
-
 	"shin-go/internal/bot"
+	"shin-go/internal/wa"
 )
 
 // ─── registro ───────────────────────────────────────────────────────────────
@@ -80,20 +79,20 @@ func TestPermisosDeLosComandosDeGrupo(t *testing.T) {
 // La comparación de JID es el punto donde el bot de JS se equivocaba: el mismo
 // usuario llega como teléfono o como LID y comparar cadenas a pelo falla.
 func TestSameUser(t *testing.T) {
-	anaPN := types.NewJID("5215500000101", types.DefaultUserServer)
-	anaLID := types.NewJID("198765432101", types.HiddenUserServer)
+	anaPN := wa.NewJID("5215500000101", wa.DefaultUserServer)
+	anaLID := wa.NewJID("198765432101", wa.HiddenUserServer)
 
 	casos := []struct {
 		nombre string
-		a, b   types.JID
+		a, b   wa.JID
 		igual  bool
 	}{
 		{"mismo jid", anaPN, anaPN, true},
-		{"teléfono contra sí mismo", anaPN, types.NewJID("5215500000101", types.DefaultUserServer), true},
-		{"LID contra sí mismo", anaLID, types.NewJID("198765432101", types.HiddenUserServer), true},
-		{"dos usuarios distintos", anaPN, types.NewJID("5215500000102", types.DefaultUserServer), false},
-		{"vacío contra algo", types.EmptyJID, anaPN, false},
-		{"los dos vacíos", types.EmptyJID, types.EmptyJID, false},
+		{"teléfono contra sí mismo", anaPN, wa.NewJID("5215500000101", wa.DefaultUserServer), true},
+		{"LID contra sí mismo", anaLID, wa.NewJID("198765432101", wa.HiddenUserServer), true},
+		{"dos usuarios distintos", anaPN, wa.NewJID("5215500000102", wa.DefaultUserServer), false},
+		{"vacío contra algo", wa.JID{}, anaPN, false},
+		{"los dos vacíos", wa.JID{}, wa.JID{}, false},
 	}
 	for _, caso := range casos {
 		if got := sameUser(caso.a, caso.b); got != caso.igual {
@@ -103,8 +102,8 @@ func TestSameUser(t *testing.T) {
 
 	// El teléfono con y sin el "9" que mete WhatsApp al registrarse en algunos
 	// países se considera la misma persona (se comparan los últimos dígitos).
-	conNueve := types.NewJID("5215551234567", types.DefaultUserServer)
-	sinNueve := types.NewJID("525551234567", types.DefaultUserServer)
+	conNueve := wa.NewJID("5215551234567", wa.DefaultUserServer)
+	sinNueve := wa.NewJID("525551234567", wa.DefaultUserServer)
 	if !sameUser(conNueve, sinNueve) {
 		t.Fatal("el mismo número con y sin el 9 no se reconoció")
 	}
@@ -198,11 +197,11 @@ func TestPlantillasPorDefecto(t *testing.T) {
 // Sin router no hay dueño reconocido: la comprobación no puede decir "sí" por
 // defecto, o cualquiera pasaría por owner y podría expulsar.
 func TestIsBotOwnerSinRouter(t *testing.T) {
-	quien := types.NewJID("5215500000101", types.DefaultUserServer)
+	quien := wa.NewJID("5215500000101", wa.DefaultUserServer)
 	if bot.IsBotOwner(quien) {
 		t.Fatal("sin router, IsBotOwner debe ser false")
 	}
-	if bot.IsBotOwner(types.EmptyJID) {
+	if bot.IsBotOwner(wa.JID{}) {
 		t.Fatal("un JID vacío nunca es el dueño")
 	}
 }

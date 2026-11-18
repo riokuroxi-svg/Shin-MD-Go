@@ -10,17 +10,16 @@ import (
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
-	"go.mau.fi/whatsmeow/types"
 	"google.golang.org/protobuf/proto"
 )
 
 // SendAudioVoz manda un MP3 como nota de voz (el círculo con la onda). Los
 // caracteres cuentan para la cola como un mensaje corto: el audio no es texto.
-func (c *Client) SendAudioVoz(ctx context.Context, chat types.JID, mp3 []byte, priority bool) error {
+func (c *Client) SendAudioVoz(ctx context.Context, chat JID, mp3 []byte, priority bool) error {
 	if len(mp3) == 0 {
 		return errVacio
 	}
-	up, err := c.WA.Upload(ctx, mp3, whatsmeow.MediaAudio)
+	up, err := c.waClient.Upload(ctx, mp3, whatsmeow.MediaAudio)
 	if err != nil {
 		return err
 	}
@@ -35,7 +34,7 @@ func (c *Client) SendAudioVoz(ctx context.Context, chat types.JID, mp3 []byte, p
 		Mimetype:      proto.String("audio/mpeg"),
 	}}
 	return c.Queue.Do(ctx, 1, priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
@@ -44,11 +43,11 @@ func (c *Client) SendAudioVoz(ctx context.Context, chat types.JID, mp3 []byte, p
 // título/artista, su duración (sin ella el móvil enseña un cromo de 0 s) y un
 // enlace de atribución. La usa `.play`: una pista que dice su origen no se
 // finge de donde no vino.
-func (c *Client) SendAudioPista(ctx context.Context, chat types.JID, mp3 []byte, titulo string, segundos int, origen string, priority bool) error {
+func (c *Client) SendAudioPista(ctx context.Context, chat JID, mp3 []byte, titulo string, segundos int, origen string, priority bool) error {
 	if len(mp3) == 0 {
 		return errVacio
 	}
-	up, err := c.WA.Upload(ctx, mp3, whatsmeow.MediaAudio)
+	up, err := c.waClient.Upload(ctx, mp3, whatsmeow.MediaAudio)
 	if err != nil {
 		return err
 	}
@@ -68,18 +67,18 @@ func (c *Client) SendAudioPista(ctx context.Context, chat types.JID, mp3 []byte,
 	// lo enseña en un audio); el comando la ya lo dice en el texto de la ficha.
 	_ = origen
 	return c.Queue.Do(ctx, len(titulo), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
 
 // SendVideoPlano manda un MP4 normal con caption (el caso de .yt/.tiktok).
 // El caption también cuenta para el anti-ban: es texto andando.
-func (c *Client) SendVideoPlano(ctx context.Context, chat types.JID, mp4 []byte, caption string, priority bool) error {
+func (c *Client) SendVideoPlano(ctx context.Context, chat JID, mp4 []byte, caption string, priority bool) error {
 	if len(mp4) == 0 {
 		return errVacio
 	}
-	up, err := c.WA.Upload(ctx, mp4, whatsmeow.MediaVideo)
+	up, err := c.waClient.Upload(ctx, mp4, whatsmeow.MediaVideo)
 	if err != nil {
 		return err
 	}
@@ -94,7 +93,7 @@ func (c *Client) SendVideoPlano(ctx context.Context, chat types.JID, mp4 []byte,
 		Mimetype:      proto.String("video/mp4"),
 	}}
 	return c.Queue.Do(ctx, len(caption), priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
@@ -104,11 +103,11 @@ func (c *Client) SendVideoPlano(ctx context.Context, chat types.JID, mp4 []byte,
 // lleva dentro un VideoMessage normal — igual que hace Baileys
 // (`m.ptvMessage = videoMessage`). WhatsApp recorta a círculo al pintarlo:
 // el que graba debe centrar al sujeto.
-func (c *Client) SendVideoRedondo(ctx context.Context, chat types.JID, mp4 []byte, segundos int, priority bool) error {
+func (c *Client) SendVideoRedondo(ctx context.Context, chat JID, mp4 []byte, segundos int, priority bool) error {
 	if len(mp4) == 0 {
 		return errVacio
 	}
-	up, err := c.WA.Upload(ctx, mp4, whatsmeow.MediaVideo)
+	up, err := c.waClient.Upload(ctx, mp4, whatsmeow.MediaVideo)
 	if err != nil {
 		return err
 	}
@@ -126,7 +125,7 @@ func (c *Client) SendVideoRedondo(ctx context.Context, chat types.JID, mp4 []byt
 	}
 	msg := &waE2E.Message{PtvMessage: video}
 	return c.Queue.Do(ctx, 1, priority, func() error {
-		_, err := c.WA.SendMessage(ctx, chat, msg)
+		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
 		return err
 	})
 }
