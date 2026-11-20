@@ -16,7 +16,11 @@
 #    3. Clona el repo (o lo actualiza si ya está; jamás toca un clon cuyo
 #       origin sea otro repo — p. ej. uno de desarrollo) y compila con `make`.
 #    4. Deja el binario instalado ($PREFIX/bin/shin en Termux), un .env
-#       listo para editar y ARRANCA el bot: pasa a ser este proceso (exec),
+#       listo para editar y ARRANCA el bot: pasa a ser este proceso (exec).
+#       Si ya había un bot corriendo, el binario se sustituye RENOMBRANDO, no
+#       con «cp»: copiar sobre un ejecutable en uso da «Text file busy»
+#       (ETXTBSY) y el proceso vivo se queda con su versión hasta que se
+#       reinicie. Sin root y sin paradas raras.
 #       como el instalador del Shin-MD JS. Si no hay sesión de WhatsApp, el
 #       propio bot se detiene a preguntarte tu número y te da el código de
 #       8 letras. Con systemd (VPS con root) el arranque queda en la unidad.
@@ -403,6 +407,90 @@ compilar() {
   morir "la compilación falló (mira arriba). Último recurso: compila «make termux» en una PC, muévelo a $PREFIX/bin/shin"
 }
 
+# ─── sustituir un binario que puede estar en uso ──────────────────────────
+#
+# «cp» sobre un ejecutable que se está ejecutando falla con ETXTBSY
+# («Text file busy»): el open(O_TRUNC) lo rechaza el núcleo. Y desde que
+# existe «shin start» esto es lo normal al actualizar —el bot desprendido
+# sobrevive a que cierres Termux, así que al reinstalar sigue ahí con el
+# fichero abierto—. Antes el instalador se caía ahí y ya.
+#
+# La solución no es matar al bot: es escribir al lado y RENAMEAR. rename(2) no
+# escribe dentro del fichero en ejecución, cambia la entrada del directorio; el
+# proceso vivo se queda con su inode viejo (la versión anterior, hasta que se
+# reinicie) y el nuevo entra en su sitio. Sólo si eso tampoco es posible
+# (sdcardfs/FUSE, que no deja renombrar) se para al bot y se reintenta el cp.
+pidos_del_bot() { # los pids que pueden estar sujetando $1, sin repetirlos
+  # El fichero que deja «shin start» es la pista fiable; «pidof» es la red para
+  # quien arrancó el bot a mano (sin pidfile). Las dos fuentes dan a veces el
+  # mismo pid y se quita el duplicado: si no, el aviso y el SIGTERM se repiten.
+  lista=""
+  vistos="" # hay que inicializarlo: el script corre con «set -u» y un
+            # «vistos: parameter not set» mataría la lista entera del subshell
+  fichero_pid="$(dirname "$1")/data/shin.pid"
+  if [ -f "$fichero_pid" ]; then
+    p=$(sed -n '1p' "$fichero_pid" 2>/dev/null | sed 's/[[:space:]].*//' || true)
+    case "$p" in
+      ''|*[!0-9]*) ;;
+      *) [ "$p" -gt 1 ] && kill -0 "$p" 2>/dev/null && lista="$p" ;;
+    esac
+  fi
+  if hay pidof; then lista="$lista $(pidof shin 2>/dev/null | tr '\n' ' ')"; fi
+  for p in $lista; do
+    mismo_binario "$p" "$1" || continue
+    case " $vistos " in *" $p "*) ;; *) vistos="$vistos $p"; printf '%s ' "$p" ;; esac
+  done
+  return 0
+}
+
+# mismo_binario: ¿el proceso $1 es ESE fichero $2? «pidof shin» vale para
+# encontrar al bot, pero en un VPS compartido puede nombrar el «shin» de otro
+# usuario (o cualquier cosa que se llame así), y un instalador no tiene derecho
+# a matar a un desconocido. Con /proc a la vista se comprueba el ejecutable;
+# si /proc no existe (macOS) se confía en el nombre.
+mismo_binario() {
+  if [ -d "/proc/$1" ] && hay readlink; then
+    real=$(readlink "/proc/$1/exe" 2>/dev/null | sed 's/ (deleted)$//')
+    [ "$real" = "$2" ] && return 0
+    return 1
+  fi
+  return 0
+}
+
+esperar_muerto() { # $1 pid, ~4 s
+  i=0
+  while [ $i -lt 20 ]; do
+    kill -0 "$1" 2>/dev/null || return 0
+    sleep 0.2 2>/dev/null || sleep 1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+sustituir() { # $1 binario nuevo → $2 destino; 0 si quedó en su sitio
+  if [ ! -e "$2" ]; then
+    cp "$1" "$2" && chmod +x "$2" && return 0
+    return 1
+  fi
+  temporal="$2.nuevo.$$"
+  if cp "$1" "$temporal" 2>/dev/null && chmod +x "$temporal" 2>/dev/null; then
+    if mv -f "$temporal" "$2" 2>/dev/null; then return 0; fi
+  fi
+  rm -f "$temporal" 2>/dev/null
+  # Plan B: aquí sí hace falta parar a quien lo tiene abierto.
+  for pid in $(pidos_del_bot "$2"); do
+    aviso "el bot (pid $pid) tiene abierto $2 y no se puede renombrar: lo detengo"
+    kill -TERM "$pid" 2>/dev/null || true
+    if ! esperar_muerto "$pid"; then
+      aviso "sigue vivo tras 4 s: se termina"
+      kill -KILL "$pid" 2>/dev/null || true
+      sleep 1 2>/dev/null || true
+    fi
+  done
+  cp "$1" "$2" && chmod +x "$2" && return 0
+  return 1
+}
+
 instalar() {
   paso "Instalación"
   if [ "$TERMUX" = 1 ]; then
@@ -414,8 +502,17 @@ instalar() {
   fi
   if [ -n "$DRY_RUN" ]; then dato "(dry-run) dist/shin + .env → $DESTINO"; return 0; fi
   mkdir -p "$DESTINO/data"
-  cp "$DIR/dist/shin" "$DESTINO/shin"
-  chmod +x "$DESTINO/shin"
+  # Avisar antes de tocar: si hay un bot corriendo, el fichero se sustituye sin
+  # pararlo, y ese proceso sigue vivo con la versión anterior hasta que se
+  # reinicie. Decirlo evita el «¿por qué sigue igual?» de la mañana siguiente.
+  corriendo=$(pidos_del_bot "$DESTINO/shin")
+  if [ -n "$corriendo" ]; then
+    aviso "hay un shin corriendo (pid $corriendo): se instala encima sin molestarlo"
+    dato "el proceso vivo sigue con la versión anterior — al reiniciar pasa a la nueva"
+  fi
+  if ! sustituir "$DIR/dist/shin" "$DESTINO/shin"; then
+    morir "no pude escribir $DESTINO/shin (¿disco lleno, sin permisos?). A mano, SIN parar el bot:   mv -f $DIR/dist/shin $DESTINO/shin   · o para antes:   shin stop && cp $DIR/dist/shin $DESTINO/shin"
+  fi
 
   if [ ! -f "$DESTINO/.env" ]; then
     if [ -f "$DIR/.env.example" ]; then
@@ -478,7 +575,7 @@ ARRANQUE
   if [ -n "$DRY_RUN" ]; then dato "(dry-run) exec $DESTINO/shin $BOT_ARGS"; return 0; fi
   if hay pgrep && pgrep -x shin >/dev/null 2>&1; then
     aviso "ya hay un «shin» corriendo; no arranco otro."
-    dato "para reiniciarlo: Ctrl+C en su terminal y vuelve a escribir  shin"
+    dato "para reiniciarlo: Ctrl+C en su terminal, o   shin restart   (si arrancó con «shin start»)"
     return 0
   fi
   cd "$DESTINO" || morir "no pude entrar en $DESTINO"
@@ -504,7 +601,8 @@ resumen() {
   printf '      shin --code 521XXXXXXXXXX   vincular con número a mano\n\n'
   dato "vincular WhatsApp: el bot pregunta tu número la primera vez y te da"
   dato "un código de 8 letras (Ajustes › Dispositivos vinculados › con número)"
-  dato "parar: Ctrl+C en la terminal del bot"
+  dato "parar: Ctrl+C en la terminal del bot · o «shin stop» (sin terminal)"
+  dato "sin teclado (VPS):  shin start · shin status · shin logs -f · shin stop"
   dato "config: $DESTINO/.env · datos: $DESTINO/data/"
   dato "actualizar: el mismo comando de siempre; .env y data/ jamás se tocan"
 }
