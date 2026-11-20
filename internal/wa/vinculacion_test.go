@@ -82,10 +82,18 @@ func TestPanelesNoRompiyContienenLoImportante(t *testing.T) {
 	b.Reset()
 	PanelCodigo(&b, "5215544443333", "XBBM4PBT")
 	s := b.String()
-	for _, trozo := range []string{"tu código", "XBBM-4PBT", "5215544443333", "Vincular un dispositivo › con número"} {
+	for _, trozo := range []string{"tu código", "X B B M - 4 P B T", "5215544443333", "Vincular un dispositivo › con número"} {
 		if !strings.Contains(s, trozo) {
 			t.Fatalf("el panel del código debe contener %q\n%s", trozo, s)
 		}
+	}
+	// Con espacios se puede leer y seleccionar; sin quitarlos, nadie lo copia
+	// mal. Y si alguien vuelve a pintarlo con letras de bloque, esto falla.
+	if strings.ContainsAny(s, "█▓▒░") {
+		t.Error("el código no se dibuja con arte de bloques (se ve mal en Termux)")
+	}
+	if !strings.Contains(strings.ReplaceAll(s, " ", ""), "XBBM-4PBT") {
+		t.Error("quitando los espacios tiene que quedar el código tal cual")
 	}
 	b.Reset()
 	ExplicarSinTerminal(&b, "no hay sesión")

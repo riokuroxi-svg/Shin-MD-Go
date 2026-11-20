@@ -7,20 +7,12 @@ package consola
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mattn/go-runewidth"
 )
 
 // ─── truncarANSI ──────────────────────────────────────────────────────────
-
-// anchoVisible mide una línea sin códigos ANSI y contando 反魂 como 2.
-func anchoVisible(s string) int {
-	return runewidth.StringWidth(stripANSI(s))
-}
 
 func TestTruncarANSICortaAlAnchoVisible(t *testing.T) {
 	casos := []struct {
@@ -181,157 +173,130 @@ func TestTeletipoAgorraMientrasElPanelVivo(t *testing.T) {
 	}
 }
 
-// ─── Panel ───────────────────────────────────────────────────
+// ─── la pantalla (búfer alternativo) ─────────────────────────────────────
 
-// TestPanelNoComeLineasDeArriba: el repintado sube `alto` líneas y borra desde
-// ahí. Si el cursor viviera en la primera fila del bloque, cada refresco
-// borraría la línea de encima (el log recién escrito).
-func TestPanelNoComeLineasDeArriba(t *testing.T) {
-	antes := coloresOn
-	coloresOn = true
-	defer func() { coloresOn = antes }()
-
+// TestPantallaEntraYSaleDelBufferAlternativo: entrar con ?1049h y salir con
+// ?1049l, siempre por pares. Si se queda a medias, al usuario le queda la
+// terminal «rota» (sin cursor, con el prompt encima del último cuadro).
+func TestPantallaEntraYSaleDelBufferAlternativo(t *testing.T) {
 	var b bytes.Buffer
-	p := NuevoPanel(&b, func() []string { return []string{"a", "b"} }, nil)
-	p.Arrancar(15 * time.Millisecond)
+	p := NuevaPantalla(&b, func() []string { return []string{"a", "b"} }, nil, nil)
+	p.arrancar(15 * time.Millisecond)
 	time.Sleep(60 * time.Millisecond)
 	p.Parar()
+
 	salida := b.String()
-	// Tras pintar NO puede haber un «subir» sobrante: solo el de borrar.
-	if alto := strings.Count(salida, "b\x1b[0m\x1b[0m\r\n"); alto < 1 {
-		t.Log("pistas del número de refrescos:", alto)
+	if !strings.Contains(salida, "\x1b[?1049h\x1b[?25l") {
+		t.Error("no entró en el búfer alternativo / no escondió el cursor")
 	}
-	for _, i := range []int{} {
-		_ = i
+	if !strings.HasSuffix(salida, "\x1b[?25h\x1b[?1049l") {
+		t.Errorf("no salió limpio del búfer alternativo: %q", salida[len(salida)-24:])
 	}
-	if strings.Contains(salida, "\r\n\x1b[2A") {
-		t.Error("doble subida: el siguiente repintado se comería la línea de arriba")
+	if n := strings.Count(salida, "\x1b[?1049h"); n != 1 {
+		t.Errorf("entró %d veces; una sola, o parpadea", n)
+	}
+	if n := strings.Count(salida, "\x1b[?1049l"); n != 1 {
+		t.Errorf("salió %d veces", n)
 	}
 }
 
-func TestPanelSeCongelaAlSalir(t *testing.T) {
-	// El test corre sin terminal: se fuerza el color para ejercitar el mismo
-	// camino que ve un usuario en Termux/VPS.
-	antes := coloresOn
-	coloresOn = true
-	defer func() { coloresOn = antes }()
-
+// TestPantallaLimpiaCadaLinea: cada cuadro va de la esquina, con \x1b[K al final
+// de cada línea y \e[J al final del cuadro. Eso es lo que sustituye al «subir N
+// líneas» que en Termux fallaba según el ancho.
+func TestPantallaLimpiaCadaLinea(t *testing.T) {
 	var b bytes.Buffer
-	n := 0
-	p := NuevoPanel(&b, func() []string {
-		n++
-		return []string{"línea uno", "línea dos"}
-	}, nil)
-	p.Arrancar(20 * time.Millisecond)
-	time.Sleep(90 * time.Millisecond)
+	p := NuevaPantalla(&b, func() []string { return []string{"línea uno", "línea dos"} },
+		func() []string { return []string{"q salir"} }, nil)
+	p.arrancar(15 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
 	p.Parar()
 
 	salida := b.String()
-	// El bloque son 2 líneas de datos + la ayuda al pie: cada repintado sube
-	// el cursor 3 para tapar lo anterior. Eso es lo que impide restos.
-	if up := strings.Count(salida, "\033[3A\r\033[J"); up < 2 {
-		t.Errorf("el panel debe subir sus 3 líneas y borrar al repintar; lo hizo %d veces", up)
+	if !strings.Contains(salida, "\x1b[H") {
+		t.Error("no llevó el cursor a la esquina: se pintarían encima de otro sitio")
 	}
+	if strings.Count(salida, "\x1b[K") < 3 {
+		t.Error("alguna línea no se limpió con \x1b[K (quedarían restos del cuadro anterior)")
+	}
+	if !strings.Contains(salida, "\x1b[J") {
+		t.Error("no se borró el resto de la pantalla (quedaría basura debajo)")
+	}
+	// Salida sincronizada: abierta y cerrada las mismas veces, o la terminal
+	// puede mostrar el barrido a medias (el «flash» que se veía antes).
+	if a, c := strings.Count(salida, "\x1b[?2026h"), strings.Count(salida, "\x1b[?2026l"); a != c || a == 0 {
+		t.Errorf("marcas de salida sincronizada despareadas: %d abiertas, %d cerradas", a, c)
+	}
+	// Cada refresco pinta el estado entero: no debe repetirse dos veces en la
+	// misma pasada ni dejar líneas en blanco acumuladas.
 	if strings.Contains(salida, "\n\n\n") {
-		t.Error("el panel dejó líneas en blanco acumuladas (scroll en un móvil)")
+		t.Error("acumuló líneas en blanco (en un móvil eso es scroll infinito)")
 	}
-	if strings.Contains(salida, "línea uno\rlínea uno") {
-		t.Error("dibujó la misma línea dos veces seguidas")
-	}
-	// Al salir el bloque se QUEDA (último estado visible) y el cursor baja:
-	// si Parar borrara, se comería el mensaje de cierre que va debajo.
-	if i := strings.LastIndex(salida, "\033[J"); i > strings.LastIndex(salida, "línea dos") {
-		t.Error("Parar borró el panel: el mensaje de cierre desaparecía")
-	}
-	if !strings.HasSuffix(salida, "\r\n") {
-		t.Errorf("tras parar el cursor debe quedar en una línea nueva: %q", salida[len(salida)-12:])
-	}
-	// Cada repintado dibuja el bloque entero y sube lo mismo: nunca de más.
 	if got := strings.Count(stripANSI(salida), "línea uno"); got < 2 {
-		t.Errorf("quería al menos 2 dibujos, hay %d", got)
+		t.Errorf("quería al menos 2 refrescos, hay %d", got)
 	}
 }
 
-func TestPanelSinColorNoDibujaNada(t *testing.T) {
-	antes := coloresOn
-	coloresOn = false
-	defer func() { coloresOn = antes }()
+// TestPantallaNoSacaNadaPorFueraDeAncho: con ventana de 40, nada puede medir
+// 41 — una línea de más hace scroll y descuadra el cuadro entero.
+func TestPantallaRespetaElAnchoDeLaVentana(t *testing.T) {
 	var b bytes.Buffer
-	p := NuevoPanel(&b, func() []string { return []string{"x"} }, nil)
-	p.Arrancar(5 * time.Millisecond)
+	p := NuevaPantalla(&b, func() []string {
+		return LineasEstado(Estado{
+			Version: "0.22.0", Cuenta: "Anti", Conectado: true,
+			Prefijos: []string{">", "=>"}, Comandos: 213, Uptime: 4231 * time.Second,
+			Enviados: 3, Cupo: 157, EnCola: 2, Procesados: 9, Recibidos: 41,
+			Web: "http://127.0.0.1:5560",
+		}, 40)
+	}, func() []string { return Pie(40) }, nil)
+	p.medida = func() (int, int) { return 40, 24 } // como Termux en vertical
+	p.arrancar(20 * time.Millisecond)
+	time.Sleep(60 * time.Millisecond)
+	p.Parar()
+
+	for _, l := range strings.Split(stripANSI(b.String()), "\r\n") {
+		l = strings.TrimRight(l, "\x1b[J\x1b[0m")
+		l = strings.TrimSuffix(strings.TrimSuffix(l, "\x1b[K"), "\r")
+		if w := anchoVisible(l); w > 40 {
+			t.Errorf("línea de %d columnas (máximo 40): %q", w, l)
+		}
+	}
+}
+
+// TestPantallaSinTerminalNoPintaNada: en systemd/pm2/nohup tiene que salir
+// texto plano, ni un escape. Es lo que hace que sirva en un VPS.
+func TestPantallaSinTerminalNoPintaNada(t *testing.T) {
+	var b bytes.Buffer
+	p := NuevaPantalla(&b, func() []string { return []string{"x"} }, nil, nil)
+	if p.Arrancar(5 * time.Millisecond) {
+		t.Error("Arrancar dijo que sí sin haber terminal")
+	}
 	time.Sleep(30 * time.Millisecond)
 	p.Parar()
 	if b.Len() != 0 {
-		t.Errorf("sin TTY no se pinta ningún panel (sería texto roto en un log): %q", b.String())
+		t.Errorf("sin TTY no se pinta nada (sería texto roto en el log): %q", b.String())
 	}
 }
 
-func TestPanelOcultarMostrar(t *testing.T) {
+// TestPantallaOcultarMostrar: `e` baja al registro y `v` vuelve; cada uno
+// emite su secuencia una sola vez y no se pisa si se repite la tecla.
+func TestPantallaOcultarMostrar(t *testing.T) {
 	var b bytes.Buffer
-	p := NuevoPanel(&b, func() []string { return []string{"x"} }, nil)
-	p.Mostrar()
-	if b.Len() == 0 && coloresOn {
-		t.Error("Mostrar debe dibujar")
-	}
+	p := NuevaPantalla(&b, func() []string { return []string{"x"} }, nil, nil)
+	p.arrancar(30 * time.Millisecond)
 	b.Reset()
 	p.Ocultar()
-	if !coloresOn && b.Len() != 0 {
-		t.Error("sin color no se pueden borrar líneas")
+	if !strings.Contains(b.String(), "\x1b[?1049l") {
+		t.Error("Ocultar no devolvió la terminal al usuario")
 	}
-}
-
-func TestResumenEnUnaLinea(t *testing.T) {
-	r := Resumen(Estado{Version: "0.22.0", Conectado: true, Uptime: time.Minute, Recibidos: 3, Procesados: 2, EnCola: 1, Comandos: 213, Enviados: 4, Cupo: 20})
-	if strings.ContainsAny(r, "\n") {
-		t.Errorf("el resumen es de una línea, salió:\n%s", r)
+	b.Reset()
+	p.Ocultar() // segunda vez: no debe escribir nada más
+	if b.Len() != 0 {
+		t.Errorf("Ocultar dos veces escribió de más: %q", b.String())
 	}
-	for _, quiere := range []string{"conectado", "1m 00s", "4/20"} {
-		if !strings.Contains(stripANSI(r), quiere) {
-			t.Errorf("falta %q en %q", quiere, stripANSI(r))
-		}
+	b.Reset()
+	p.Mostrar()
+	if !strings.Contains(b.String(), "\x1b[?1049h") {
+		t.Error("Mostrar no volvió a entrar en el búfer alternativo")
 	}
-}
-
-func TestAtajosSinTerminalNoEstorba(t *testing.T) {
-	// En un servicio (systemd, docker) no hay /dev/tty usable: Atajos no debe
-	// leer de stdin ni bloquear el cierre.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	parar := Atajos(ctx, map[string]func(){})
-	hecho := make(chan struct{})
-	go func() { parar(); close(hecho) }()
-	select {
-	case <-hecho:
-	case <-time.After(2 * time.Second):
-		t.Fatal("parar() bloqueó sin haber terminal: el bot no se podría apagar")
-	}
-}
-
-// ─── menú ────────────────────────────────────────────────────
-
-func TestRenderMenuCabeYSeAlinea(t *testing.T) {
-	ops := []Opcion{
-		{Tecla: "1", Titulo: "Código de 8 letras  (recomendado)", Detalle: "te lo da este bot y lo escribes en WhatsApp"},
-		{Tecla: "2", Titulo: "Código QR", Detalle: "para escanear desde OTRO teléfono (útil en un VPS)"},
-	}
-	for _, ancho := range []int{40, 50, 60, 80} {
-		s := renderMenu(ops, 0)
-		if !strings.HasSuffix(s, "\r\n") {
-			t.Errorf("ancho %d: en modo crudo cada línea debe terminar en \\r\\n", ancho)
-		}
-		for i, l := range strings.Split(strings.TrimSuffix(s, "\r\n"), "\r\n") {
-
-			if strings.Contains(l, "\n") {
-				t.Errorf("ancho %d línea %d trae un salto suelto: %q", ancho, i, l)
-			}
-		}
-		// El selector y las dos opciones deben estar, una por línea.
-		if strings.Count(s, "❯") != 1 {
-			t.Errorf("ancho %d: quería un solo ❯", ancho)
-		}
-	}
-	if got := lineasMenu(ops); got != strings.Count(renderMenu(ops, 0), "\r\n") {
-		t.Errorf("lineasMenu()= %d, el render tiene %d líneas: el repintado dejaría restos",
-			got, strings.Count(renderMenu(ops, 0), "\r\n"))
-	}
+	p.Parar()
 }

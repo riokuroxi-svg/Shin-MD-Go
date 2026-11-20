@@ -43,49 +43,6 @@ type Estado struct {
 	Web        string
 }
 
-// LineasEstado: el panel como líneas de texto YA coloreadas y truncadas al
-// ancho `ancho`. Sin ANSI de por medio, contar líneas es exacto.
-func LineasEstado(e Estado, ancho int) []string {
-	estado := stRojo.Sprint("○ desconectado")
-	if e.Conectado {
-		estado = stMenta.Sprint("● conectado")
-	}
-	var out []string
-	out = append(out, stSakura.Sprint("反魂")+" "+stPapel.Sprint("SHIN-MD")+
-		stTenue.Sprint(" v"+e.Version)+"   "+estado)
-	if e.Cuenta != "" {
-		out = append(out, stTenue.Sprint("cuenta     ")+stPapel.Sprint(e.Cuenta))
-	}
-	out = append(out, stTenue.Sprint("encendido  ")+stPapel.Sprint(duracion(e.Uptime)))
-	if e.Cupo > 0 {
-		out = append(out, stTenue.Sprint("cupo hoy   ")+barra(float64(e.Enviados)/float64(e.Cupo))+
-			" "+stPapel.Sprintf("%d/%d", e.Enviados, e.Cupo))
-	}
-	if e.Comandos > 0 {
-		out = append(out, stTenue.Sprint("comandos   ")+
-			stPapel.Sprintf("%d · prefijos [%s]", e.Comandos, strings.Join(e.Prefijos, " ")))
-	}
-	out = append(out, stTenue.Sprint("recibidos  ")+stPapel.Sprintf("%d · %d respondidos · %d en cola",
-		e.Recibidos, e.Procesados, e.EnCola))
-	du, dt, ru, rt := vitales()
-	if dt > 0 {
-		out = append(out, stTenue.Sprint("disco      ")+barra(float64(du)/float64(dt))+" "+stPapel.Sprint(Humanizar(du)))
-	}
-	if rt > 0 {
-		out = append(out, stTenue.Sprint("ram        ")+barra(float64(ru)/float64(rt))+
-			" "+stPapel.Sprintf("%s/%s", Humanizar(ru), Humanizar(rt)))
-	}
-	if e.Web != "" {
-		out = append(out, stTenue.Sprint("panel web  ")+stPapel.Sprint(e.Web))
-	}
-	// Truncado por ANCHO VISIBLE (runewidth no cuenta los escapes): nada se
-	// envuelve y las cuentas de repintado cuadran.
-	for i, l := range out {
-		out[i] = truncarANSI(l, ancho)
-	}
-	return out
-}
-
 // truncarANSI corta a `ancho` columnas visibles respetando los códigos ANSI.
 func truncarANSI(s string, ancho int) string {
 	if ancho <= 0 {
@@ -138,9 +95,16 @@ func truncarANSI(s string, ancho int) string {
 		b.Reset()
 		b.WriteString(sinUltimo + "…")
 	}
-	b.WriteString("\033[0m")
+	if !cortado && !strings.ContainsRune(s, 0x1b) {
+		return s // ni se cortó ni había color: devolver tal cual, sin reset suelto
+	}
+	b.WriteString("\033[0m") // cerrar lo que haya quedado abierto por el corte
 	return b.String()
 }
+
+// Duracion: «1h 04m» o «1m 48s». Exportada para que «shin status» desde fuera
+// use exactamente el mismo formato que el panel, no otro parecido.
+func Duracion(d time.Duration) string { return duracion(d) }
 
 func duracion(d time.Duration) string {
 	d = d.Round(time.Second)
@@ -247,9 +211,10 @@ func stripANSI(s string) string {
 
 // Historial guarda los últimos mensajes sin crecer sin fin.
 type Historial struct {
-	mu   sync.Mutex
-	Max  int
-	cola []string
+	mu         sync.Mutex
+	Max        int
+	cola       []string
+	desplazado int // líneas hacia atrás que pide el usuario (RePág)
 }
 
 // Anadir apunta un aviso con la hora.
@@ -259,7 +224,10 @@ func (h *Historial) Anadir(msg string) {
 	if h.Max <= 0 {
 		h.Max = 40
 	}
-	h.cola = append(h.cola, time.Now().Format("15:04")+"  "+msg)
+	// La línea se guarda TAL CUAL la pintó Prefijo, con su hora dentro: si se le
+	// pusiera otra aquí, el panel saldría con dos relojes en cada línea (el
+	// fallo que se veía en Termux: «22:35 ◐ 22:35:14 …»).
+	h.cola = append(h.cola, msg)
 	if len(h.cola) > h.Max {
 		h.cola = h.cola[len(h.cola)-h.Max:]
 	}
@@ -278,6 +246,61 @@ func (h *Historial) Ultimos(n int) []string {
 	return out
 }
 
+// Ventana: las n líneas que hay que enseñar ahora mismo, respetando cuánto se
+// haya retrocedido. Se usa desde la pantalla; al llegar un aviso nuevo no se
+// mueve nada (quien está leyendo hacia atrás no pierde su sitio).
+func (h *Historial) Ventana(n int) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if n <= 0 || len(h.cola) == 0 {
+		return nil
+	}
+	final := len(h.cola) - h.desplazado
+	if final < 0 {
+		final = 0
+	}
+	inicio := final - n
+	if inicio < 0 {
+		inicio = 0
+	}
+	out := make([]string, final-inicio)
+	copy(out, h.cola[inicio:final])
+	return out
+}
+
+// Atras/Adelante: Retroceder y Avanzar sobre el registro.
+func (h *Historial) Atras(n int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if tope := len(h.cola) - 1; h.desplazado+n > tope {
+		h.desplazado = tope
+		if h.desplazado < 0 {
+			h.desplazado = 0
+		}
+		return
+	}
+	h.desplazado += n
+}
+
+func (h *Historial) Adelante(n int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.desplazado -= n; h.desplazado < 0 {
+		h.desplazado = 0
+	}
+}
+
+// Abajo: el aviso más reciente vuelve a estar a la vista (lo hace el propio
+// panel al repintar cuando el usuario pulsa v, o al llegar algo nuevo).
+func (h *Historial) Abajo() { h.mu.Lock(); h.desplazado = 0; h.mu.Unlock() }
+
+// Viejos: si el usuario está releyendo, no se le interrumpe.
+func (h *Historial) Releyendo() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.desplazado > 0
+}
+
 // ImprimirHistorial pinta los últimos avisos, o dice que no hay.
 func ImprimirHistorial(w io.Writer, avisos []string) {
 	if len(avisos) == 0 {
@@ -285,7 +308,10 @@ func ImprimirHistorial(w io.Writer, avisos []string) {
 		return
 	}
 	fmt.Fprintln(w)
-	ancho := Ancho() - 4
+	// Se deja aire de sobra (6, no 4): el sangrado son 2 columnas y hay glifos
+	// (◐ ● !) que algunas fuentes miden como dobles — si se envuelve justo al
+	// borde, el terminal parte la línea por su cuenta a media palabra.
+	ancho := Ancho() - 6
 	for _, a := range avisos {
 		// Cada aviso envuelto a su ancho, con sangría: en 50 columnas una
 		// frase larga sin esto se parte a media palabra.
@@ -300,173 +326,63 @@ func ImprimirHistorial(w io.Writer, avisos []string) {
 	fmt.Fprintln(w)
 }
 
-// ─── el panel que se repinta en su sitio ─────────────────────────────────
+// ─── la cabecera del estado ──────────────────────────────────────────────
 
-// Panel dibuja un bloque de líneas fijas y lo refresca sin dejar restos.
-type Panel struct {
-	w       io.Writer
-	foto    func() []string
-	extra   func() []string // líneas de abajo (últimos avisos)
-	mu      sync.Mutex
-	lineas  []string
-	alto    int
-	visible bool
-	parar   chan struct{}
-	hecho   chan struct{}
-}
-
-// NuevoPanel prepara el panel (no lo dibuja todavía).
-func NuevoPanel(w io.Writer, foto func() []string, extra func() []string) *Panel {
-	// Guarda contra dos escritores a la vez: el tick y la tecla `e`.
-	return &Panel{w: &escritorSeguro{w: w}, foto: foto, extra: extra}
-}
-
-// escritorSeguro serializa los Write del panel (tick, teclas, logs).
-type escritorSeguro struct {
-	mu sync.Mutex
-	w  io.Writer
-}
-
-func (e *escritorSeguro) Write(p []byte) (int, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.w.Write(p)
-}
-
-// Arrancar lo dibuja y lo refresca cada `cada` hasta Parar.
-func (p *Panel) Arrancar(cada time.Duration) {
-	if !coloresOn {
-		return
+// LineasEstado: las filas del estado, «etiqueta … valor», sin bordes y sin
+// barras de bloque. Los ▓░ se veían macizos con la fuente de Termux y
+// descuadraban el ancho; aquí el dato va alineado a la derecha y se lee igual
+// en 40 que en 100 columnas.
+func LineasEstado(e Estado, ancho int) []string {
+	ancho = encajar(ancho, 40, AnchoCasa)
+	conexion := stRojo.Sprint("○ desconectado")
+	if e.Conectado {
+		conexion = stMenta.Sprint("● conectado")
 	}
-	p.mu.Lock()
-	p.visible = true
-	p.parar = make(chan struct{})
-	p.hecho = make(chan struct{})
-	p.mu.Unlock()
-
-	p.repintar()
-	// Los canales se capturan ANTES de lanzar el goroutine: Parar() los pone
-	// a nil y leerlos desde dentro sería una carrera (el ticker podría
-	// quedarse esperando para siempre sobre un canal cerrado a medias).
-	parar, hecho := p.parar, p.hecho
-	go func() {
-		defer close(hecho)
-		t := time.NewTicker(cada)
-		defer t.Stop()
-		for {
-			select {
-			case <-parar:
-				return
-			case <-t.C:
-				p.repintar()
-			}
+	filas := []string{
+		Fila("conexión", conexion, ancho),
+		Fila("encendido", duracion(e.Uptime), ancho),
+	}
+	if e.Cuenta != "" {
+		filas = append(filas, Fila("cuenta", e.Cuenta, ancho))
+	}
+	if e.Comandos > 0 {
+		pf := "prefijos"
+		if len(e.Prefijos) == 1 {
+			pf = "prefijo"
 		}
-	}()
+		filas = append(filas, Fila("comandos",
+			fmt.Sprintf("%d · %s [%s]", e.Comandos, pf, strings.Join(e.Prefijos, " ")), ancho))
+	}
+	if e.Cupo > 0 {
+		filas = append(filas, Fila("cupo de hoy",
+			fmt.Sprintf("%d/%d no prioritarios", e.Enviados, e.Cupo), ancho))
+	}
+	filas = append(filas,
+		Fila("mensajes", fmt.Sprintf("%d recibidos · %d respondidos", e.Recibidos, e.Procesados), ancho),
+		Fila("cola", fmt.Sprintf("%d en espera", e.EnCola), ancho))
+	du, dt, ru, rt := vitales()
+	if dt > 0 {
+		filas = append(filas, Fila("disco", fmt.Sprintf("%s de %s", Humanizar(du), Humanizar(dt)), ancho))
+	}
+	if rt > 0 {
+		filas = append(filas, Fila("memoria", fmt.Sprintf("%s/%s", Humanizar(ru), Humanizar(rt)), ancho))
+	}
+	if e.Web != "" {
+		filas = append(filas, Fila("panel web", e.Web, ancho))
+	}
+	// Por si el terminal es más estrecho que 58: nada debe partirse.
+	for i, l := range filas {
+		filas[i] = truncarANSI(l, ancho)
+	}
+	return filas
 }
 
-// Repintar fuerza un refresco (lo llama el teletipo al llegar un log).
-func (p *Panel) Repintar() { p.repintar() }
-
-// Ocultar borra el panel de la pantalla.
-func (p *Panel) Ocultar() {
-	p.mu.Lock()
-	p.visible = false
-	p.borrar()
-	p.mu.Unlock()
-}
-
-// Mostrar vuelve a dibujarlo.
-func (p *Panel) Mostrar() {
-	p.mu.Lock()
-	p.visible = true
-	p.alto = 0
-	p.mu.Unlock()
-	p.repintar()
-}
-
-// Parar apaga el refresco. NO borra el bloque: al salir lo que estaba en
-// pantalla queda como último estado (y así el mensaje de cierre, que se
-// imprime justo debajo, no se borra a sí mismo).
-func (p *Panel) Parar() {
-	p.mu.Lock()
-	parar, hecho := p.parar, p.hecho
-	p.parar, p.hecho = nil, nil
-	p.mu.Unlock()
-	if parar != nil {
-		close(parar)
-		<-hecho
-	}
-	p.mu.Lock()
-	p.visible = false
-	p.alto = 0
-	p.mu.Unlock()
-	if coloresOn {
-		fmt.Fprint(p.w, "\r\n")
-	}
-}
-
-// borrar quita el bloque actual (con el candado tomado).
-func (p *Panel) borrar() {
-	if p.alto == 0 || !coloresOn {
-		return
-	}
-	fmt.Fprintf(p.w, "\033[%dA\r\033[J", p.alto)
-	p.alto = 0
-}
-
-func (p *Panel) repintar() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.visible || !coloresOn {
-		return
-	}
-	ancho := Ancho() - 1
-	if ancho < 20 {
-		ancho = 20
-	}
-	lineas := make([]string, 0, 20)
-	lineas = append(lineas, strings.Split(strings.Join(p.foto(), "\n"), "\n")...)
-	if p.extra != nil {
-		extras := p.extra()
-		if len(extras) > 0 {
-			lineas = append(lineas, stTenue.Sprint(strings.Repeat("┈", minInt(ancho-2, 40))))
-			lineas = append(lineas, extras...)
-		}
-	}
-	// Ayuda al pie, en versión corta si la pantalla es de móvil: nunca se
-	// corta a media palabra porque se elige por ancho.
-	ayuda := "e ocultar · s resumen · p comandos · l avisos · q salir"
-	if ancho < 60 {
-		ayuda = "e panel · s estado · p cmd · l log · q salir"
-	}
-	lineas = append(lineas, stTenue.Sprint(ayuda))
-	for i, l := range lineas {
-		// Dos espacios de aire a la izquierda; el ancho útil descuenta esos 2.
-		lineas[i] = "  " + truncarANSI(l, ancho-2)
-	}
-
-	// Subir al principio del bloque anterior y borrar de ahí abajo: así un
-	// bloque que encoge tampoco deja restos.
-	p.borrar()
-	for _, l := range lineas {
-		// En modo crudo (raw) \n no vuelve al principio de la línea: con \r\n
-		// el bloque se apila bien también con las teclas activas.
-		fmt.Fprint(p.w, "\r\033[K"+l+"\r\n")
-	}
-	p.alto = len(lineas)
-	p.lineas = lineas
-	// El cursor se queda en la línea siguiente al bloque, NO encima: al
-	// repintar se sube `alto` y se borra desde ahí. Si el cursor viviera en la
-	// primera fila, el repintado borraría también la línea de arriba (un log
-	// recién escrito) y el usuario lo vería parpadear/desaparecer.
-	fmt.Fprint(p.w, "\r")
-}
-
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+// Cabecera: el estado enmarcado, listo para ir arriba de la pantalla.
+func Cabecera(e Estado) []string {
+	ancho := AnchoFijo()
+	titulo := stSakuraFuerte.Sprint("shin") + stTenue.Sprint(" · ") +
+		stPapel.Sprint("v"+e.Version) + stTenue.Sprint(" · en línea")
+	return Marco(titulo, LineasEstado(e, ancho), ancho)
 }
 
 // ─── atajos de teclado ───────────────────────────────────────────────────

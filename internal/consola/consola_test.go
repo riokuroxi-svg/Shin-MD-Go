@@ -9,6 +9,7 @@ package consola
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // largo: runas visibles de un string (los códigos ANSI no cuentan); lo usan
@@ -73,26 +74,26 @@ func TestEnvolverNoDesborda(t *testing.T) {
 	}
 }
 
-func TestPanelListoDiceLoSuyo(t *testing.T) {
-	var b strings.Builder
-	PanelListo(&b, Listo{
-		Version: "0.20.0", Cuenta: "Fulano", Comandos: 213,
-		Prefijos: []string{"."}, Web: "http://127.0.0.1:3000", PID: 1234,
-	})
-	s := b.String()
-	for _, trozo := range []string{"ACTIVO", "Fulano", "213", "[.]", "127.0.0.1:3000", "│", "SHIN-MD-GO 0.20.0"} {
-		if !strings.Contains(s, trozo) {
-			t.Fatalf("el panel debe contener %q\n%s", trozo, s)
+func TestLineasEstadoCabeceras(t *testing.T) {
+	filas := LineasEstado(Estado{
+		Version: "0.22.0", Cuenta: "Fulano", Conectado: true, Comandos: 213,
+		Prefijos: []string{"."}, Uptime: 90 * time.Second, Enviados: 4, Cupo: 157,
+		Web: "http://127.0.0.1:3000",
+	}, AnchoCasa)
+	una := strings.Join(filas, "\n")
+	for _, trozo := range []string{"conexión", "conectado", "encendido", "1m 30s", "Fulano",
+		"213", "[.]", "4/157", "127.0.0.1:3000"} {
+		if !strings.Contains(una, trozo) {
+			t.Fatalf("la cabecera debe decir %q\n%s", trozo, una)
 		}
 	}
-	// Vitales presentes en este sandbox (linux): disco y ram con barra.
-	if !strings.Contains(s, "▓") || !strings.Contains(s, "ram") {
-		t.Fatalf("el panel debe llevar vitales con barras:\n%s", s)
-	}
-	// Y ninguna línea desborda el ancho de esta terminal (o sus 80 por omisión).
-	for i, l := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
-		if n := largo(l); n > 80 { // en CI Ancho() cae a 80; nunca más que eso
-			t.Fatalf("línea %d con %d runas visibles, máximo 80: %q", i, n, l)
+	for _, l := range filas {
+		if n := anchoVisible(l); n > AnchoCasa {
+			t.Errorf("fila de %d columnas (máximo %d): %q", n, AnchoCasa, SinColor(l))
+		}
+		// Ni un bloque sólido: en Termux se veían como una mancha.
+		if strings.ContainsAny(l, "█▓▒░") {
+			t.Errorf("usó glifos de bloque: %q", SinColor(l))
 		}
 	}
 }

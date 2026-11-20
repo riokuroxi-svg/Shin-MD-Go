@@ -107,11 +107,11 @@ func avisoQR() {
 	fmt.Fprintln(os.Stdout)
 	if esTermux() {
 		consola.Ojo("corres el bot en el propio teléfono: ahí no hay cámara que escanee este QR.")
-		fmt.Fprintln(os.Stdout, "  "+consola.Tenue("si te equivocaste, reinicia y elige 1) Código de 8 letras."))
+		consola.Frase(consola.Tenue("si te equivocaste, reinicia y elige 1) Código de 8 letras."))
 		fmt.Fprintln(os.Stdout)
 		return
 	}
-	fmt.Fprintln(os.Stdout, "  "+consola.Tenue("escanéalo con WhatsApp del teléfono que llevará la cuenta."))
+	consola.Frase(consola.Tenue("escanéalo con WhatsApp del teléfono que llevará la cuenta."))
 	fmt.Fprintln(os.Stdout)
 }
 

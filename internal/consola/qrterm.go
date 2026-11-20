@@ -117,7 +117,15 @@ func DibujarQR(w io.Writer, contenido, pie string) bool {
 	}
 	io.WriteString(w, sep+"\n")
 	if pie != "" {
-		for _, l := range envolver(pie, Ancho()-8) {
+		// El pie se envuelve contra lo que queda LIBRE a cada lado, no contra el
+		// ancho de la terminal: la sangría del centrado ya se come margen, y si
+		// el tamaño de ventana todavía no está listo (arranque, `script`, un
+		// CI) Ancho() cae a 80 y la frase salía por fuera del QR.
+		libre := Ancho() - 2*(margen+2)
+		if libre < 24 {
+			libre = 24
+		}
+		for _, l := range envolver(pie, libre) {
 			io.WriteString(w, sangria+"  "+stTenue.Sprint(l)+"\n")
 		}
 	}

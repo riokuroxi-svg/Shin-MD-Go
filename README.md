@@ -164,6 +164,30 @@ Requisitos: **Go 1.26 o superior**. Nada más — ni Node, ni Python, ni compila
 PAIRING_NUMBER=52155… ./dist/shin   # lo mismo, por entorno (servicios)
 ```
 
+Mientras corre, la pantalla es fija: arriba el estado (conexión, encendido,
+cuenta, comandos, cupo, cola, disco, memoria, el panel web) y debajo el
+registro del bot, repintado cada segundo y en cuanto llega un aviso. Se dibuja
+en el búfer alternativo, así que un `clear` o girar el teléfono no lo descuadran
+y, al salir, tu terminal recupera su historial intacto. Teclas: `e` bajar al
+registro (y volver con la misma), `↑`/`↓` releer, `r` reconectar el socket, `?`
+ayuda, `q` parar.
+
+**En un servidor no hay teclado, y no hace falta.** Estas cuatro órdenes son
+todo lo que se necesita —sin systemd y sin PM2, y el proceso sobrevive a que se
+cierre la SSH:
+
+```bash
+./dist/shin start --code 52155…   # arranca en segundo plano y escribe el log
+./dist/shin status                # ● en ejecución · pid · 1h 04m · 24M + lo último del log
+./dist/shin logs -f               # seguir el log (Ctrl+C sólo deja de mirar, no para el bot)
+./dist/shin stop                  # SIGTERM y esperar el cierre limpio
+```
+
+Sin terminal (systemd, pm2, `nohup`, `> log.txt`) **no se pinta nada**: el bot
+suelta líneas de texto grepeables, con el estado al arrancar y sin prometer una
+tecla que no existe. El PID vive en `data/shin.pid`; si el fichero miente —un
+`kill -9`, un reinicio—, `status` y `stop` lo dicen y lo limpian.
+
 La vinculación es siempre **por código de 8 letras** (Ajustes › Dispositivos
 vinculados › Vincular con número): el QR no existe — el bot corre en el
 propio móvil, donde nadie podría escanearlo. Sin sesión y sin terminal
@@ -330,6 +354,30 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.23.0** — **la consola, como la del otro bot (y usable en un VPS sin
+  teclado)**: portada de seis líneas en vez de banner de letras gigantes; el
+  código de vinculación en texto seleccionable con las letras separadas (no
+  arte de bloques, que no se podía copiar con el dedo y partía el borde en 50
+  columnas); cajas de la casa —58 columnas, borde de una sola columna `│ ╭ ╮`,
+  cero `█▓▒░`—; paleta en HEX de la casa medida sobre el ancho **visible**; la
+  pantalla viva pasa al **búfer alternativo** con salida sincronizada y
+  repintado cada segundo + en cada aviso (inmune a `clear`, a girar el móvil y
+  al scroll, y el historial del usuario sale intacto al salir); el pie ya no
+  promete `Ctrl+C` donde no hay teclado; y órdenes nuevas
+  `shin start · stop · status · logs · restart` (pid en `data/shin.pid`,
+  `setsid`, SIGTERM esperado, zombis no cuentan como vivo, log leído desde el
+  final y reabierto si se rotó). Sin terminal no se dibuja nada: texto plano.
+  De paso, cinco fallos que sólo se ven en un pty de 50 columnas: `OPOST`
+  apagado (salía la escalera), dos relojes en cada línea de historial, un
+  repintado escribiendo en la terminal normal, `Parar()` colgado por el watcher
+  de `SIGWINCH` y el envoltorio comiéndose las sangrías. Detalles en
+  [`docs/CAMBIOS-0.23.0.md`](docs/CAMBIOS-0.23.0.md).
+- **0.22.0** — **consola dinámica en Termux y VPS**: menú de dos puertas para
+  vincular (código de 8 letras / QR) con flechas y atajo numérico, pantalla
+  viva que se repinta en su sitio, plan B medido para el QR que no cabe
+  (PNG a `data/vincular-qr.png` + `termux-open`), y `Ctrl+C` devuelto a su
+  significado de siempre dentro del modo de teclas. La cara se rediseñó entera
+  en 0.23.0; las ideas de usabilidad se quedaron.
 - **0.21.0** — **adaptador WhatsApp desacoplado + repartidor FIFO por
   chat**: `cmd/shin`, `cmds` e `internal/bot` dejan de importar tipos,
   eventos y Protobufs de `whatsmeow` en producción (31 → 13 archivos con

@@ -200,6 +200,17 @@ func (c *Client) OwnID() JID {
 // Uptime: tiempo desde que arrancó el proceso (lo muestra .ping).
 func (c *Client) Uptime() time.Duration { return time.Since(c.StartedAt) }
 
+// Reconectar: cerrar el socket y volver a abrirlo. No toca la sesión guardada,
+// así que es seguro pulsarlo desde la consola cuando la conexión se vea
+// enredada (wifi que cambia, un portador que se queda dormido en el móvil).
+func (c *Client) Reconectar(_ context.Context) error {
+	if c.waClient == nil {
+		return errors.New("sin cliente de WhatsApp que reconectar")
+	}
+	c.waClient.Disconnect()
+	return c.waClient.Connect()
+}
+
 // Context devuelve el contexto del proceso, para lo que no viene de un mensaje.
 func (c *Client) Context() context.Context { return c.baseCtx }
 

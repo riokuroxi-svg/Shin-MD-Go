@@ -1,10 +1,14 @@
 // Shin-MD-Go — Copyright (C) 2026 riokuroxi-svg · AGPL-3.0-only
 //
-// vitales_unix.go — disco y RAM del propio equipo (linux, android, mac).
-// syscall.Sysinfo y Statfs son llamadas corrientes: el seccomp de Android
-// las deja pasar (guardadas del build de Windows por el tag de arriba).
+// vitales_unix.go — disco y RAM del propio equipo (Linux y Android).
 //
-//go:build !windows
+// syscall.Sysinfo y Statfs son llamadas corrientes y el seccomp de Android las
+// deja pasar. Va limitada a linux/android a propósito: «Sysinfo» es un invento
+// de Linux —en macOS la RAM se pregunta por sysctl (vitales_bsd.go)— y colgar
+// de que el paquete syscall tenga el mismo nombre en todos lados es la forma
+// clásica de romper un build que nadie prueba.
+//
+//go:build linux || android
 
 package consola
 
@@ -30,7 +34,3 @@ func vitales() (discoUsado, discoTotal, ramUsada, ramTotal uint64) {
 	}
 	return
 }
-
-// runtimeSinTTY: en Windows no se abre /dev/tty (no existe). En unix sí se
-// puede intentar, y es justo lo que salva el caso `curl | sh`.
-func runtimeSinTTY() bool { return false }

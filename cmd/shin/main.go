@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.22.0"
+var version = "0.23.0"
 
 // numeroDeCodigo es el número pasado en --code, tal cual (se normaliza al
 // usarlo). Vive aquí y no en una variable local de main porque la
@@ -38,6 +38,13 @@ var version = "0.22.0"
 var numeroDeCodigo string
 
 func main() {
+	// «shin start|stop|status|logs» no arrancan el bot: atienden la orden. Van
+	// antes que el parseo de banderas porque en un VPS estas cuatro se escriben
+	// solas, sin saberse de memoria qué flag hace qué.
+	if len(os.Args) > 1 && ordenDeServicio(os.Args[1]) {
+		os.Exit(servicio(os.Args[1], os.Args[2:]))
+	}
+
 	var (
 		phone   = flag.String("code", "", "vincular con número (código de 8 letras; sin número, lo pregunta)")
 		showVer = flag.Bool("version", false, "mostrar versión")
@@ -59,7 +66,7 @@ func main() {
 		return
 	}
 
-	fmt.Print(consola.Banner(version)) // lo primero que se ve, como en el JS
+	fmt.Print(consola.Banner(version)) // seis líneas, siempre; sin arte de bloques
 
 	cmds.SetVersion(version) // .info muestra la versión real del binario
 
@@ -67,7 +74,9 @@ func main() {
 	// Los logs de la consola pasan por un teletipo: mientras el panel vivo
 	// está en pantalla, se guardan para enseñarlos DENTRO del panel (si se
 	// soltaran sueltos, romperían el dibujo y lo duplicarían en un móvil).
-	historial := &consola.Historial{Max: 40}
+	// 400: con el panel en pantalla el usuario puede retroceder con las flechas
+	// para releer, y en un móvil de 24 filas eso son ~16 pantallas de historial.
+	historial := &consola.Historial{Max: 400}
 	teletipo := consola.NuevoTeletipo(os.Stdout, historial)
 	log := xlog.New(cfg.LogLevel, teletipo)
 
@@ -237,36 +246,23 @@ func main() {
 		log.Warn("no se pudo iniciar el panel web: " + err.Error())
 	}
 
-	log.Ok("Shin-MD-Go en marcha. Ctrl+C para salir.")
-
-	// La caja que cierra el arranque, como en el JS: cuenta, comandos,
-	// prefijos, vitales del equipo y la dirección del panel web.
+	// ── La pantalla del bot ────────────────────────────────────────────
+	// Cabecera fija arriba (conexión, cuenta, comandos, cupo, cola, disco,
+	// memoria, panel web) y el registro del bot debajo, ocupando lo que sobre.
+	// Se pinta en el búfer alternativo y se repinta cada segundo —y en cuanto
+	// llega un aviso—, así que ni el `clear`, ni girar el teléfono, ni una
+	// ventana que cambia de tamaño lo descuadran.
 	//
-	// Solo se pinta cuando NO va a aparecer la pantalla viva: las dos dicen lo
-	// mismo y en una pantalla de móvil de 50×24 duplicarlo es que el arranque
-	// entero se vaya de arriba con el primer refresco.
-	if !consola.EsTerminal() {
-		consola.PanelListo(os.Stdout, consola.Listo{
-			Version:  version,
-			Cuenta:   client.AccountName(),
-			Comandos: uniq,
-			Prefijos: cfg.Prefixes,
-			Web:      fmt.Sprintf("http://127.0.0.1:%d", cfg.WebPort),
-			PID:      os.Getpid(),
-		})
-	}
-
-	// ── Pantalla viva ──────────────────────────────────────────────────
-	// Un panel que se repinta en su sitio (conexión, cupo, cola, vitales) y
-	// teclas de un carácter mientras el bot corre, sin reiniciar nada:
+	// Teclas:
 	//
-	//	e  enseñar/ocultar el panel
-	//	s  resumen en una línea
-	//	p  qué comandos hay y cómo se usan
-	//	l  últimos avisos
+	//	e  bajar al registro (sale del panel; v vuelve)
+	//	r  reconectar el socket de WhatsApp (sin perder la sesión)
+	//	?  ayuda
 	//	q  parar (igual que Ctrl+C)
 	//
-	// En un servicio o en un tubo no se enciende: ahí no hay teclas que leer.
+	// En un servicio, en un tubo o sin terminal no se dibuja nada: ahí el bot
+	// escribe líneas de texto, que es lo que quiere journald, y se para con
+	// «shin stop» o con el gestor de servicios — no con un Ctrl+C que no existe.
 	foto := func() consola.Estado {
 		s := client.Queue.Snapshot()
 		d := despachador.Stats()
@@ -279,33 +275,84 @@ func main() {
 			Web: fmt.Sprintf("http://127.0.0.1:%d", cfg.WebPort),
 		}
 	}
-	enVivo := consola.NuevoPanel(os.Stdout,
-		func() []string { return consola.LineasEstado(foto(), consola.Ancho()-1) },
+	ayuda := false // con ? se mete un bloque de ayuda en el pie
+	pantalla := consola.NuevaPantalla(os.Stdout,
+		func() []string { return consola.Cabecera(foto()) },
 		func() []string {
-			// Abajo, los dos últimos avisos: el pulso del bot sin salir del panel.
-			ultimos := historial.Ultimos(2)
-			for i, l := range ultimos {
-				ultimos[i] = consola.Tenue(l)
+			pie := consola.Pie(consola.AnchoFijo())
+			if ayuda {
+				pie = append(pie,
+					consola.Ayuda("  e registro / v panel · r reconectar · q parar"),
+					consola.Ayuda("  shin stop desde otra sesión · shin status"),
+					consola.Ayuda("  comandos: "+fmt.Sprintf("%d con prefijos [%s]", uniq, strings.Join(cfg.Prefixes, " "))),
+				)
 			}
-			return ultimos
-		})
-	// El teletipo pregunta al panel para repintarse cuando llega un log; sin
-	// esto, un aviso tardaría hasta 2 s en verse.
-	teletipo.Activar(consola.EsTerminal(), enVivo.Repintar)
-	enVivo.Arrancar(2 * time.Second)
-	defer enVivo.Parar()
-
-	pararAtajos := consola.Atajos(ctx, map[string]func(){
-		"e": func() { enVivo.Ocultar(); teletipo.Activar(false, nil) },
-		"v": func() { teletipo.Activar(consola.EsTerminal(), enVivo.Repintar); enVivo.Mostrar() },
-		"s": func() { enVivo.Ocultar(); consola.Bien(consola.Resumen(foto())) },
-		"p": func() { enVivo.Ocultar(); paqueteDeComandos(uniq, cfg.Prefixes) },
-		"l": func() {
-			enVivo.Ocultar()
-			consola.ImprimirHistorial(os.Stdout, historial.Ultimos(15))
+			return pie
 		},
+		historial)
+
+	// El teletipo guarda los avisos mientras el panel está en pantalla (y pide
+	// un refresco: si no, un aviso tardaría hasta un segundo en aparecer). Al
+	// bajar al registro con `e` se sueltan por stdout, como siempre.
+	pintar := func() { pantalla.Refrescar() }
+	teletipo.Activar(pantalla.Activa(), pintar)
+	if pantalla.Arrancar(time.Second) {
+		defer pantalla.Parar()
+	}
+
+	if consola.EsServicio() {
+		// Sin terminal no hay pantalla que refrescar, así que el arranque tiene
+		// que decir él solo lo que el panel diría: líneas sueltas, grepeables,
+		// sin recuadros (un recuadro dentro de journald es ruido) y sin prometer
+		// una tecla que no existe.
+		log.Ok("Shin-MD-Go en marcha · sin teclado: se para con «shin stop»")
+		for _, l := range consola.LineasEstado(foto(), 78) {
+			fmt.Fprintln(os.Stdout, "  "+consola.SinColor(l))
+		}
+		fmt.Fprintln(os.Stdout, consola.Tenue("  shin status · shin logs -f · shin stop"))
+	} else {
+		log.Ok("Shin-MD-Go en marcha. q o Ctrl+C para parar.")
+	}
+
+	// `e` es una palanca, no dos órdenes: con el registro a la vista se vuelve
+	// al panel con la misma tecla (y con v, por costumbre). Al bajar al
+	// registro se sueltan los avisos acumulados —si no, la primera vez que se
+	// pulsa la pantalla quedaría vacía, que es lo que parecía un fallo.
+	viendoRegistro := false
+	bajarAlRegistro := func() {
+		viendoRegistro = true
+		pantalla.Ocultar()
+		consola.ImprimirHistorial(os.Stdout, historial.Ultimos(24))
+		teletipo.Activar(false, nil)
+	}
+	subirAlPanel := func() {
+		viendoRegistro = false
+		historial.Abajo()
+		pantalla.Mostrar()
+		teletipo.Activar(true, pintar)
+	}
+	pararAtajos := consola.Atajos(ctx, map[string]func(){
+		"e": func() {
+			if viendoRegistro {
+				subirAlPanel()
+				return
+			}
+			bajarAlRegistro()
+		},
+		"v": subirAlPanel,
+		"r": func() {
+			ayuda = false
+			log.Info("reconectando el socket de WhatsApp…")
+			if err := client.Reconectar(ctx); err != nil {
+				log.Warn("reconexión: " + err.Error())
+			}
+		},
+		"?":      func() { ayuda = !ayuda; pantalla.Refrescar() },
 		"q":      func() { stop() }, // cancela el contexto: todo cierra limpio
 		"ctrl-c": func() { stop() }, // por si el terminal no deja mandar la señal
+		// Flechas: releer el registro hacia atrás sin salir del panel.
+		"up":   func() { historial.Atras(3); pantalla.Refrescar() },
+		"down": func() { historial.Adelante(3); pantalla.Refrescar() },
 	})
 	defer pararAtajos()
 

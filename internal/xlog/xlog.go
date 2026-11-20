@@ -58,6 +58,11 @@ func (h handlerConsola) Enabled(_ context.Context, l slog.Level) bool { return l
 func (h handlerConsola) Handle(_ context.Context, r slog.Record) error {
 	hora := r.Time.Format("15:04:05")
 	msg := r.Message
+	// Los métodos de Logger ya traen su icono (◑ ✓ ⚠ ✕) para el archivo; en
+	// pantalla el icono lo pone el prefijo, así que aquí se quita el que venga
+	// pegado al texto. Si no, cada línea saldría con dos símbolos.
+	msg = strings.TrimLeft(strings.TrimPrefix(msg, "◐ "), " ◑✓⚠✕·")
+	msg = strings.TrimSpace(msg)
 	tag := "INFO"
 	switch {
 	case r.Level >= slog.LevelError, strings.HasPrefix(msg, "✕"):

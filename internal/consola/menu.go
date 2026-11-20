@@ -23,7 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pterm/pterm"
 	"golang.org/x/term"
 )
 
@@ -155,9 +154,10 @@ func lineasMenu(opciones []Opcion) int {
 
 // renderMenu dibuja la lista con el selector ❯ en la opción activa.
 //
-// Cada línea se TRUNCA al ancho del terminal: si se dejara envolver por el
-// terminal, el menú ocuparía más líneas de las que se cuentan al repintar y
-// quedarían restos del dibujo anterior (justo lo que pasa en un móvil).
+// Las líneas se ENVUELTEN aquí, no las parte el terminal: el alto del menú se
+// cuenta sobre este mismo render (lineasMenu), así que lo que se envuelve se
+// sabe y se limpia al repintar; lo que parte el terminal, no. Y un detalle
+// cortado con «…» pierde justo la pista de para qué sirve la opción.
 func renderMenu(opciones []Opcion, sel int) string {
 	ancho := Ancho() - 1
 	if ancho < 20 {
@@ -167,7 +167,14 @@ func renderMenu(opciones []Opcion, sel int) string {
 	// \r\n, no \n: esto se imprime en MODO CRUDO (raw), donde el terminal no
 	// convierte el salto en carro+salto y cada línea seguiría en la columna
 	// anterior (el menú salía en diagonal). En modo normal \r\n es inocuo.
-	linea := func(s string) { b.WriteString(truncarANSI(s, ancho) + "\r\n") }
+	linea := func(s string) {
+		for _, t := range partir(s, ancho) {
+			if coloresOn {
+				t += "\x1b[0m" // cerrar: el estilo de un detalle no puede manchar la línea de abajo
+			}
+			b.WriteString(t + "\r\n")
+		}
+	}
 	for i, o := range opciones {
 		marca := "  "
 		titulo := stPapel.Sprint(o.Titulo)
@@ -375,10 +382,9 @@ func Paso(n int, texto string) string {
 
 // Bien / Mal / Ojo: una línea de resultado con su símbolo, del mismo tamaño
 // que el resto del arranque (sin cajas para lo pequeño).
-func Bien(texto string) { pterm.Success.WithWriter(os.Stdout).Println(texto) }
-func Mal(texto string)  { pterm.Error.WithWriter(os.Stdout).Println(texto) }
-func Ojo(texto string)  { pterm.Warning.WithWriter(os.Stdout).Println(texto) }
+func Bien(texto string) { Frase(stMenta.Sprint("✓ " + texto)) }
+func Mal(texto string)  { Frase(stRojo.Sprint("✕ " + texto)) }
+func Ojo(texto string)  { Frase(stAmbar.Sprint("! " + texto)) }
 
 // Barra expone la barra ▓▓▓░░ de los vitales para quien quiera enseñar un
 // progreso (el calentamiento, el cupo del día…).
-func Barra(frac float64) string { return barra(frac) }

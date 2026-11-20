@@ -27,7 +27,12 @@ func modoTeclas(fd int) (func(), error) {
 	guardado := *ts
 	ts.Lflag &^= unix.ECHO | unix.ICANON // ISIG se queda intacto, a propósito
 	ts.Iflag &^= unix.ICRNL | unix.INLCR | unix.IGNCR
-	ts.Oflag &^= unix.OPOST // sin traducción: nosotros escribimos \r\n
+	// OPOST se queda como está, y es un detalle con historia: apagarlo (como
+	// hace MakeRaw) deja de traducir \n a \r\n en el terminal, y como el modo
+	// de teclas dura minutos y lo usan también el log, las cajas y el registro,
+	// toda esa salida salía en escalera —línea que empieza donde acabó la
+	// anterior— al bajar al registro con `e`. No se toca: \n se traduce solo, y
+	// el \r\n que escribe el panel queda en un \r\r\n inofensivo.
 	ts.Cc[unix.VMIN] = 1
 	ts.Cc[unix.VTIME] = 0
 	if err := unix.IoctlSetTermios(fd, unix.TCSETS, ts); err != nil {

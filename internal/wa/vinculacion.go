@@ -161,41 +161,79 @@ func FormatearCodigo(codigo string) string {
 	return c
 }
 
-// PanelVinculacion: el aviso de que va a preguntar el número.
+// PanelVinculacion: el aviso de lo que va a pasar, ANTES de pedir nada. caja de
+// 58 columnas: en Termux en vertical entra entero y no se parte por la mitad.
 func PanelVinculacion(w io.Writer) {
-	consola.Caja(w, "v · vinculación",
+	ancho := consola.AnchoFijo()
+	filas := consola.Marco(consola.SakuraFuerte("vinculación"), []string{
+		"",
 		consola.Papel("Vamos a vincular tu WhatsApp con el bot."),
+		consola.Tenue("No hay que escanear nada: WhatsApp te da un"),
+		consola.Tenue("código de 8 letras y lo escribes en el teléfono."),
 		"",
-		consola.Tenue("No hay que escanear nada: WhatsApp te da"),
-		consola.Tenue("un código de 8 letras y lo escribes ahí."),
+		consola.Tenue("Ajustes › Dispositivos vinculados ›"),
+		consola.Tenue("Vincular un dispositivo › Vincular con número"),
 		"",
-		consola.Papel("Ajustes › Dispositivos vinculados"),
-		consola.Papel("› Vincular un dispositivo"),
-		consola.Papel("› Vincular con número"),
-	)
+	}, ancho)
+	fmt.Fprintln(w)
+	for _, l := range filas {
+		fmt.Fprintln(w, l)
+	}
+	fmt.Fprintln(w)
 }
 
-// PanelCodigo: el momento importante de todo el arranque. Se dibuja grande,
-// aparte del resto, para que nadie tenga que buscarlo entre líneas de log.
-// Los pasos se numeran con consola.Paso (sakura) para que se lean de un
-// vistazo en la pantalla de un móvil.
+// PanelCodigo: el momento importante de todo el arranque, y el único que de
+// verdad hay que leer. Se enseña centrado y con espacios entre letras —así se
+// distingue la R de la 2— en vez de dibujarlo con arte de bloques: ese ocupaba
+// seis filas de pantalla, se veía fatal con la fuente de Termux y no se podía
+// seleccionar con el dedo para copiarlo.
 func PanelCodigo(w io.Writer, numero, codigo string) {
 	codigo = FormatearCodigo(codigo)
-	fmt.Fprintln(w)
-	fmt.Fprint(w, consola.Grande(codigo)) // las 8 letras grandes: ES el bot
-	consola.Caja(w, "tu código de vinculación",
-		consola.Papel("Escríbelo en el teléfono, así tal cual."),
+	ancho := consola.AnchoFijo()
+	filas := consola.Marco(consola.Menta("tu código"), []string{
 		"",
-		consola.Tenue("Caduca en ~60 s. Si expira, vuelve"),
-		consola.Tenue("a arrancar el bot y sale uno nuevo."),
-	)
+		consola.Centrar(consola.Tenue("escríbelo en el teléfono"), ancho-4),
+		"",
+		consola.Centrar(consola.SakuraFuerte(consola.Espaciar(codigo)), ancho-4),
+		"",
+		consola.Centrar(consola.Tenue("caduca en ~60 s · si expira, vuelve a arrancar"), ancho-4),
+		"",
+	}, ancho)
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %s %s\n\n", consola.Tenue("cuenta:"), consola.Papel(numero))
-	fmt.Fprintln(w, "  "+consola.Paso(1, "abre WhatsApp en ese teléfono"))
-	fmt.Fprintln(w, "  "+consola.Paso(2, "Ajustes › Dispositivos vinculados"))
-	fmt.Fprintln(w, "  "+consola.Paso(3, "Vincular un dispositivo › con número"))
-	fmt.Fprintln(w, "  "+consola.Paso(4, "escribe el código de arriba"))
+	for _, l := range filas {
+		fmt.Fprintln(w, l)
+	}
+	pasos := []string{
+		"abre WhatsApp en ese teléfono",
+		"Ajustes › Dispositivos vinculados",
+		"Vincular un dispositivo › con número",
+		"teclea el código de arriba",
+	}
+	anchoPasos := consola.Ancho() - 6
+	if anchoPasos < 30 {
+		anchoPasos = 30
+	}
+	lineaEnvolviendo(w, "", consola.Tenue, "cuenta: "+consola.SinColor(consola.Papel(numero)), anchoPasos)
+	for n, paso := range pasos {
+		lineaEnvolviendo(w, consola.Paso(n+1, ""), func(x string) string { return x }, paso, anchoPasos)
+	}
 	fmt.Fprintln(w)
+}
+
+// lineaEnvolviendo: una frase, escrita en tantas líneas como hagan falta.
+//
+// `marca` (el «1.» del paso) va sólo en la primera; `pintar` se aplica a cada
+// línea YA envuelta: colorear antes de medir metería los escapes en medio del
+// cálculo del ancho y salían líneas de más. Es el motivo por el que en Termux
+// un «3. Vincular un dispositivo › con número» se partía en la «o» final.
+func lineaEnvolviendo(w io.Writer, marca string, pintar func(string) string, s string, ancho int) {
+	for i, l := range consola.Envolver(s, ancho) {
+		if i == 0 {
+			fmt.Fprintln(w, "  "+marca+pintar(l))
+			continue
+		}
+		fmt.Fprintln(w, "    "+pintar(l))
+	}
 }
 
 // PanelQR: la otra forma de vincular, para quien prefiera escanear (un VPS
@@ -218,34 +256,22 @@ func PanelQR(w io.Writer, codigo, png string) {
 	if ancho < 30 {
 		ancho = 30
 	}
-	// `marca` va solo en la primera línea (el «1.»), `pintar` se aplica a
-	// cada línea YA envuelta: colorear antes de envolver metería los escapes
-	// en medio del cálculo del ancho.
 	sin := func(s string) string { return s }
-	linea := func(marca string, pintar func(string) string, s string) {
-		for i, l := range consola.Envolver(s, ancho) {
-			if i == 0 {
-				fmt.Fprintln(w, "  "+marca+pintar(l))
-				continue
-			}
-			fmt.Fprintln(w, "    "+pintar(l))
-		}
-	}
 	fmt.Fprintln(w)
-	linea("", consola.Ambar, fmt.Sprintf("el QR necesita %d columnas y tu terminal tiene %d: dibujarlo aquí lo partiría y no escanearía.", necesitas, consola.Ancho()))
-	linea("", consola.Tenue, "tres salidas, la que te venga bien:")
-	linea(consola.Paso(1, ""), sin, fmt.Sprintf("ensancha la ventana (o gira el teléfono) a %d columnas y vuelve a arrancar", necesitas+2))
+	lineaEnvolviendo(w, "", consola.Ambar, fmt.Sprintf("el QR necesita %d columnas y tu terminal tiene %d: dibujarlo aquí lo partiría y no escanearía.", necesitas, consola.Ancho()), ancho)
+	lineaEnvolviendo(w, "", consola.Tenue, "tres salidas, la que te venga bien:", ancho)
+	lineaEnvolviendo(w, consola.Paso(1, ""), sin, fmt.Sprintf("ensancha la ventana (o gira el teléfono) a %d columnas y vuelve a arrancar", necesitas+2), ancho)
 	if png != "" {
 		switch err := consola.GuardarQRPNG(png, codigo); {
 		case err != nil:
-			linea(consola.Paso(2, ""), sin, "guardar el QR en imagen falló: "+err.Error())
+			lineaEnvolviendo(w, consola.Paso(2, ""), sin, "guardar el QR en imagen falló: "+err.Error(), ancho)
 		case esTermux():
-			linea(consola.Paso(2, ""), sin, "ábrelo con la galería:   "+consola.Sakura("termux-open "+png))
+			lineaEnvolviendo(w, consola.Paso(2, ""), sin, "ábrelo con la galería:   "+consola.Sakura("termux-open "+png), ancho)
 		default:
-			linea(consola.Paso(2, ""), sin, "cópialo y ábrelo en el ordenador: "+consola.Sakura(png))
+			lineaEnvolviendo(w, consola.Paso(2, ""), sin, "cópialo y ábrelo en el ordenador: "+consola.Sakura(png), ancho)
 		}
 	}
-	linea(consola.Paso(3, ""), sin, "o elige 1) Código de 8 letras, que no necesita escanear nada")
+	lineaEnvolviendo(w, consola.Paso(3, ""), sin, "o elige 1) Código de 8 letras, que no necesita escanear nada", ancho)
 	fmt.Fprintln(w)
 }
 
