@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.23.0"
+var version = "0.23.1"
 
 // numeroDeCodigo es el número pasado en --code, tal cual (se normaliza al
 // usarlo). Vive aquí y no en una variable local de main porque la
@@ -135,9 +135,11 @@ func main() {
 	defer client.Close()
 
 	// ── Vinculación ────────────────────────────────────────────────────
-	// Antes de nada: quién es y cómo entra. Vincular aquí (y no al final)
-	// permite que un número mal escrito se pueda corregir sin arrancar un
-	// bot a medias, y que el menú de QR/código salga cuando toca.
+	// Antes de nada: quién es y cómo entra. Esta llamada es una BARRERA, no solo
+	// «pedir el código»: sin sesión no vuelve hasta PairSuccess + Connected.
+	// Todo lo que puede abrir el búfer alternativo (en especial la TUI) debe
+	// quedarse DEBAJO. Así las ocho letras permanecen como texto quieto y
+	// copiable; arrancar el panel entre PairPhone y Connected las taparía.
 	if err := vincular(ctx, client, log); err != nil {
 		if ctx.Err() != nil {
 			log.Info("vinculación cancelada")

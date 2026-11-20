@@ -354,6 +354,15 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.23.1** — **el código de vinculación ya no queda debajo de la TUI**:
+  en una sesión nueva, `PairPhone` imprime las ocho letras como texto estático
+  y `Login` se queda ahí —sin `clear`, búfer alternativo ni repintados— hasta
+  reunir las dos confirmaciones de WhatsApp: `PairSuccess` (el teléfono aceptó
+  el código) y `Connected` (terminó la reconexión autenticada). Solo entonces
+  arranca el panel. También se aplica al QR. Una prueba de regresión bloquea
+  deliberadamente `Connected` y demuestra que la barrera no abre ni la TUI
+  puede tapar el código. Detalles en
+  [`docs/CAMBIOS-0.23.1.md`](docs/CAMBIOS-0.23.1.md).
 - **0.23.0** — **la consola, como la del otro bot (y usable en un VPS sin
   teclado)**: portada de seis líneas en vez de banner de letras gigantes; el
   código de vinculación en texto seleccionable con las letras separadas (no

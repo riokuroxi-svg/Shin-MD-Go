@@ -183,39 +183,44 @@ func PanelVinculacion(w io.Writer) {
 }
 
 // PanelCodigo: el momento importante de todo el arranque, y el único que de
-// verdad hay que leer. Se enseña centrado y con espacios entre letras —así se
-// distingue la R de la 2— en vez de dibujarlo con arte de bloques: ese ocupaba
-// seis filas de pantalla, se veía fatal con la fuente de Termux y no se podía
-// seleccionar con el dedo para copiarlo.
+// verdad hay que leer. Es salida ESTÁTICA de terminal: nada de Marco, clear,
+// búfer alternativo ni refrescos. El panel de estado no existe todavía y este
+// texto se queda visible hasta que WhatsApp confirme events.Connected.
+//
+// El código lleva espacios entre letras —así se distingue la R de la 2— en
+// vez de arte de bloques: ese ocupaba seis filas, se veía fatal con la fuente
+// de Termux y no se podía seleccionar con el dedo para copiarlo.
 func PanelCodigo(w io.Writer, numero, codigo string) {
 	codigo = FormatearCodigo(codigo)
-	ancho := consola.AnchoFijo()
-	filas := consola.Marco(consola.Menta("tu código"), []string{
-		"",
-		consola.Centrar(consola.Tenue("escríbelo en el teléfono"), ancho-4),
-		"",
-		consola.Centrar(consola.SakuraFuerte(consola.Espaciar(codigo)), ancho-4),
-		"",
-		consola.Centrar(consola.Tenue("caduca en ~60 s · si expira, vuelve a arrancar"), ancho-4),
-		"",
-	}, ancho)
-	fmt.Fprintln(w)
-	for _, l := range filas {
-		fmt.Fprintln(w, l)
+	// Se reservan dos columnas de sangría y hasta tres para «1. »: envolver
+	// antes de añadir la marca evita que una instrucción caiga en la columna
+	// final de Termux. El código espaciado mide 17, así que 18 es el mínimo.
+	anchoTexto := consola.Ancho() - 6
+	if anchoTexto < 18 {
+		anchoTexto = 18
 	}
+	if anchoTexto > 52 {
+		anchoTexto = 52
+	}
+
+	fmt.Fprintln(w)
+	lineaEnvolviendo(w, "", consola.Menta, "TU CÓDIGO DE VINCULACIÓN", anchoTexto)
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "  "+consola.SakuraFuerte(consola.Espaciar(codigo)))
+	fmt.Fprintln(w)
+	lineaEnvolviendo(w, "", consola.Tenue, "Se quedará en pantalla hasta que WhatsApp confirme.", anchoTexto)
+	lineaEnvolviendo(w, "", consola.Tenue, "Si caduca, reinicia para pedir otro.", anchoTexto)
+	fmt.Fprintln(w)
+
 	pasos := []string{
 		"abre WhatsApp en ese teléfono",
 		"Ajustes › Dispositivos vinculados",
 		"Vincular un dispositivo › con número",
 		"teclea el código de arriba",
 	}
-	anchoPasos := consola.Ancho() - 6
-	if anchoPasos < 30 {
-		anchoPasos = 30
-	}
-	lineaEnvolviendo(w, "", consola.Tenue, "cuenta: "+consola.SinColor(consola.Papel(numero)), anchoPasos)
+	lineaEnvolviendo(w, "", consola.Tenue, "cuenta: "+consola.SinColor(consola.Papel(numero)), anchoTexto)
 	for n, paso := range pasos {
-		lineaEnvolviendo(w, consola.Paso(n+1, ""), func(x string) string { return x }, paso, anchoPasos)
+		lineaEnvolviendo(w, consola.Paso(n+1, ""), func(x string) string { return x }, paso, anchoTexto)
 	}
 	fmt.Fprintln(w)
 }

@@ -246,6 +246,14 @@ func (c *Client) LoginPorQR(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("preparar vinculación por QR: %w", err)
 	}
+
+	// Se instala ANTES de Connect: el evento Connected puede llegar muy cerca
+	// del PairSuccess y no se puede perder. PairSuccess solo dice «las llaves ya
+	// se guardaron»; whatsmeow documenta que después hay una reconexión. El bot
+	// todavía no está listo —y el panel tampoco debe arrancar— hasta Connected.
+	conexion, dejarDeVigilar := c.vigilarConexion()
+	defer dejarDeVigilar()
+
 	c.qrVisible.Store(true)
 	defer c.qrVisible.Store(false)
 	// El PNG es un plano de un solo uso: se borra al terminar (se vincule o no)
@@ -264,32 +272,13 @@ func (c *Client) LoginPorQR(ctx context.Context) error {
 		sp.Success("vinculación abierta")
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case item, abierto := <-qr:
-			if !abierto {
-				return fmt.Errorf("la vinculación se cerró sin escanear el QR")
-			}
-			switch item.Event {
-			case whatsmeow.QRChannelEventCode:
-				// El evento QR (con el código) ya lo pinta el manejador de
-				// eventos; aquí solo se evita el bucle cerrado.
-				continue
-			case whatsmeow.QRChannelSuccess.Event:
-				consola.Bien("¡vinculado! el bot queda conectado")
-				return nil
-			case whatsmeow.QRChannelTimeout.Event:
-				return fmt.Errorf("el QR caducó sin escanearse; vuelve a arrancar el bot")
-			default:
-				if item.Error != nil {
-					return fmt.Errorf("vinculación por QR: %w", item.Error)
-				}
-				return fmt.Errorf("vinculación por QR interrumpida (%s)", item.Event)
-			}
-		}
+	if err := esperarVinculacion(ctx, qr, conexion, func() {
+		consola.Bien("QR aceptado; esperando que WhatsApp abra la conexión…")
+	}); err != nil {
+		return fmt.Errorf("vinculación por QR: %w", err)
 	}
+	consola.Bien("¡vinculado! WhatsApp confirmó la conexión")
+	return nil
 }
 
 // drenarCanalQR tira los códigos QR que no se usan hasta que la
@@ -299,6 +288,106 @@ func (c *Client) LoginPorQR(ctx context.Context) error {
 func drenarCanalQR(ch <-chan whatsmeow.QRChannelItem) {
 	for range ch {
 	}
+}
+
+// vigilarConexion crea la barrera que separa la vinculación de la aplicación.
+// El canal solo entrega cuando WhatsApp confirma que el socket está autenticado
+// (events.Connected), no cuando PairPhone se limita a devolver las ocho letras.
+// También transforma los fallos terminales del handshake en errores para no
+// dejar el código visible eternamente si la vinculación ya no puede terminar.
+func (c *Client) vigilarConexion() (<-chan error, func()) {
+	resultado := make(chan error, 1)
+	publicar := func(err error) {
+		select {
+		case resultado <- err:
+		default: // el primer desenlace manda; nunca bloquear el dispatcher
+		}
+	}
+	id := c.waClient.AddEventHandler(func(raw any) {
+		switch evt := raw.(type) {
+		case *events.Connected:
+			publicar(nil)
+		case *events.PairError:
+			if evt.Error != nil {
+				publicar(fmt.Errorf("WhatsApp rechazó la vinculación: %w", evt.Error))
+			} else {
+				publicar(errors.New("WhatsApp rechazó la vinculación"))
+			}
+		case *events.ConnectFailure:
+			publicar(fmt.Errorf("WhatsApp no abrió la conexión (%s): %s", evt.Reason, evt.Message))
+		case *events.LoggedOut:
+			publicar(fmt.Errorf("WhatsApp cerró la sesión durante la vinculación (%s)", evt.Reason))
+		case *events.ClientOutdated:
+			publicar(errors.New("WhatsApp rechazó esta versión del cliente; actualiza Shin-MD-Go"))
+		}
+	})
+	return resultado, func() { c.waClient.RemoveEventHandler(id) }
+}
+
+// esperarVinculacion necesita DOS confirmaciones independientes:
+//
+//  1. QRChannelSuccess / PairSuccess: el teléfono aceptó el código y las
+//     credenciales se guardaron;
+//  2. events.Connected: terminó la reconexión autenticada posterior.
+//
+// No basta con la primera. La documentación de whatsmeow dice expresamente que
+// PairSuccess suele ir seguido de una reconexión y que no se use el cliente
+// hasta Connected. Mientras falta cualquiera de las dos, esta función NO
+// vuelve; como main crea el panel después de Login, el código queda quieto y
+// copiable en la terminal durante toda la espera.
+func esperarVinculacion(
+	ctx context.Context,
+	qr <-chan whatsmeow.QRChannelItem,
+	conexion <-chan error,
+	alAceptar func(),
+) error {
+	parejaLista := false
+	conexionLista := false
+	for !parejaLista || !conexionLista {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-conexion:
+			if err != nil {
+				return err
+			}
+			conexionLista = true
+			conexion = nil // una confirmación basta; evita releer el canal
+		case item, abierto := <-qr:
+			if !abierto {
+				if parejaLista {
+					qr = nil
+					continue
+				}
+				return errors.New("el canal de vinculación se cerró antes de que el teléfono aceptara el código")
+			}
+			switch item.Event {
+			case whatsmeow.QRChannelEventCode:
+				// GetQRChannel se usa también para saber cuándo el pre-login
+				// está listo. Sus QR posteriores no importan en modo código.
+				continue
+			case whatsmeow.QRChannelSuccess.Event:
+				parejaLista = true
+				qr = nil
+				if alAceptar != nil {
+					alAceptar()
+				}
+			case whatsmeow.QRChannelTimeout.Event:
+				return errors.New("la vinculación caducó antes de ser confirmada; vuelve a intentarlo")
+			case whatsmeow.QRChannelEventError:
+				if item.Error != nil {
+					return item.Error
+				}
+				return errors.New("WhatsApp rechazó la vinculación")
+			default:
+				if item.Error != nil {
+					return item.Error
+				}
+				return fmt.Errorf("vinculación interrumpida (%s)", item.Event)
+			}
+		}
+	}
+	return nil
 }
 
 // Login: si ya hay sesión, conecta; sin sesión EXIGE el número y vincula
@@ -324,22 +413,30 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 	//	  WhatsApp contestaba «info query returned status 400: bad-request».
 	//	· El primer item del canal (un QR cualquiera) es la señal de «ya».
 	//
-	// Del canal solo interesa el primer evento: el QR no se dibuja (en el
-	// móvil donde corre el bot no hay cámara que lo escanee) y los errores
-	// de vinculación se siguen viendo en el resto de la consola.
+	// El primer evento del canal avisa que el pre-login está listo. Después el
+	// MISMO canal confirma PairSuccess o explica por qué caducó: no se abandona
+	// al recibir el primer QR, porque entonces Login volvería justo después de
+	// imprimir las ocho letras y main encendería el panel encima del código.
 	sp := consola.Spinner(os.Stdout, "conectando con WhatsApp…")
 	qr, err := c.waClient.GetQRChannel(ctx)
-	if err != nil && !errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
+	if err != nil {
 		if sp != nil {
 			sp.Fail("no hubo conexión")
 		}
 		return fmt.Errorf("preparar vinculación por código: %w", err)
 	}
 	if qr != nil {
-		// El canal solo cierra cuando termina la vinculación; se drena en
-		// segundo plano para que un QR que caduca no lo llene ni lo bloquee.
+		// Si se sale por error o Ctrl+C, se vacía lo que quede hasta que el
+		// contexto cierre el canal. En el camino bueno esperarVinculacion lo
+		// consume hasta PairSuccess.
 		defer func() { go drenarCanalQR(qr) }()
 	}
+
+	// Registrar antes de Connect cierra la carrera entre PairSuccess y la
+	// reconexión autenticada. La barrera no se abre hasta events.Connected.
+	conexion, dejarDeVigilar := c.vigilarConexion()
+	defer dejarDeVigilar()
+
 	if err := c.waClient.Connect(); err != nil {
 		if sp != nil {
 			sp.Fail("no hubo conexión")
@@ -348,14 +445,21 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 	}
 	if qr != nil {
 		select {
-		case _, abierto := <-qr: // primer QR = pre-login listo
+		case primero, abierto := <-qr: // primer QR = pre-login listo
 			if !abierto {
-				c.Log.Warn("el canal de vinculación se cerró antes de tiempo; se pide el código de todos modos")
+				return errors.New("el canal de vinculación se cerró antes de pedir el código")
+			}
+			if primero.Event != whatsmeow.QRChannelEventCode {
+				if primero.Error != nil {
+					return fmt.Errorf("preparar vinculación por código: %w", primero.Error)
+				}
+				return fmt.Errorf("preparar vinculación por código: evento inesperado %q", primero.Event)
 			}
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(45 * time.Second):
-			// Sin señal seguimos igual: mejor pedir el código que rendirse.
+			// Sin señal seguimos igual: algunos servidores tardan en mandar el
+			// primer QR, y PairPhone puede dar un diagnóstico más específico.
 			c.Log.Warn("no llegó el evento QR a tiempo; se pide el código de todos modos")
 		}
 	}
@@ -373,7 +477,18 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 		sp.Success("código listo")
 	}
 	PanelCodigo(os.Stdout, phone, code)
-	c.Log.Info("Código pedido: esperando a que lo teclees en el teléfono…")
+	c.Log.Info("Código visible: esperando a que lo teclees en el teléfono. Esta pantalla no se limpiará.")
+
+	// Esta espera es deliberadamente síncrona. main crea la TUI DESPUÉS de que
+	// Login vuelva, por lo que mantenerla aquí deja el código en el scrollback,
+	// sin clear, búfer alternativo ni repintados. Primero se exige PairSuccess y
+	// después la conexión autenticada; solo entonces puede aparecer el panel.
+	if err := esperarVinculacion(ctx, qr, conexion, func() {
+		consola.Bien("código aceptado; esperando que WhatsApp abra la conexión…")
+	}); err != nil {
+		return fmt.Errorf("confirmar vinculación por código: %w", err)
+	}
+	consola.Bien("¡vinculado! WhatsApp confirmó la conexión")
 	return nil
 }
 

@@ -25,9 +25,10 @@ import (
 	"shin-go/internal/xlog"
 )
 
-// vincular deja el cliente conectado (o guardado) y devuelve el primer error
-// de verdad. Un Ctrl+C a mitad no es un error: se devuelve ctx.Err() y quien
-// llama lo trata como «cancelado».
+// vincular arranca la conexión y devuelve el primer error de verdad. Para una
+// sesión NUEVA no termina al imprimir el código: espera a que el teléfono lo
+// acepte y a events.Connected. Esa espera mantiene la TUI apagada. Un Ctrl+C
+// devuelve ctx.Err() y quien llama lo trata como cancelado.
 func vincular(ctx context.Context, client *wa.Client, log *xlog.Logger) error {
 	// Un número escrito a mano manda siempre: ni menú ni preguntas.
 	if numero := numeroDeBandera(); numero != "" {

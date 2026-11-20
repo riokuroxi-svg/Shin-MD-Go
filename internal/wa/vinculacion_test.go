@@ -5,9 +5,14 @@
 package wa
 
 import (
+	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"go.mau.fi/whatsmeow"
 )
 
 func TestNormalizarTelefono(t *testing.T) {
@@ -82,7 +87,7 @@ func TestPanelesNoRompiyContienenLoImportante(t *testing.T) {
 	b.Reset()
 	PanelCodigo(&b, "5215544443333", "XBBM4PBT")
 	s := b.String()
-	for _, trozo := range []string{"tu código", "X B B M - 4 P B T", "5215544443333", "Vincular un dispositivo › con número"} {
+	for _, trozo := range []string{"TU CÓDIGO", "X B B M - 4 P B T", "5215544443333", "Vincular un dispositivo › con número"} {
 		if !strings.Contains(s, trozo) {
 			t.Fatalf("el panel del código debe contener %q\n%s", trozo, s)
 		}
@@ -91,6 +96,20 @@ func TestPanelesNoRompiyContienenLoImportante(t *testing.T) {
 	// mal. Y si alguien vuelve a pintarlo con letras de bloque, esto falla.
 	if strings.ContainsAny(s, "█▓▒░") {
 		t.Error("el código no se dibuja con arte de bloques (se ve mal en Termux)")
+	}
+	// Durante la vinculación no existe ninguna TUI. Ni siquiera un marco
+	// estático: el código es texto normal y, sobre todo, no puede traer órdenes
+	// que limpien la pantalla o entren al búfer alternativo.
+	if strings.ContainsAny(s, "╭╮╰╯│") {
+		t.Error("el código debe salir como texto plano, no dentro del panel TUI")
+	}
+	for _, control := range []string{
+		"\x1b[2J", "\x1b[J", "\x1b[K", "\x1b[H",
+		"\x1b[?1049h", "\x1b[?1049l", "\x1b[?2026h", "\x1b[?2026l",
+	} {
+		if strings.Contains(s, control) {
+			t.Errorf("el código no puede limpiar/redibujar la terminal: contiene %q", control)
+		}
 	}
 	if !strings.Contains(strings.ReplaceAll(s, " ", ""), "XBBM-4PBT") {
 		t.Error("quitando los espacios tiene que quedar el código tal cual")
@@ -109,6 +128,101 @@ func TestPanelesNoRompiyContienenLoImportante(t *testing.T) {
 // compañero al pedir el código (PairPhone) y contesta 400 bad-request si no
 // cumple «Navegador (SO)». Aquí ponía «Shin-MD (Go)»: ningún número podía
 // vincularse. La prueba falla si alguien vuelve a poner un nombre libre.
+// TestEsperarVinculacionNoAbrePanelAntesDeConnected reproduce exactamente la
+// regresión de 0.23.0: PairPhone ya imprimió las ocho letras y el teléfono las
+// aceptó (PairSuccess), pero aún falta la reconexión autenticada. Mientras no
+// llegue Connected, Login no puede volver y main no puede crear la TUI.
+func TestEsperarVinculacionNoAbrePanelAntesDeConnected(t *testing.T) {
+	ctx, cancelar := context.WithCancel(context.Background())
+	defer cancelar()
+	qr := make(chan whatsmeow.QRChannelItem, 1)
+	conexion := make(chan error, 1)
+	aceptado := make(chan struct{})
+	termino := make(chan error, 1)
+
+	go func() {
+		termino <- esperarVinculacion(ctx, qr, conexion, func() { close(aceptado) })
+	}()
+
+	qr <- whatsmeow.QRChannelSuccess
+	select {
+	case <-aceptado:
+		// El helper ya consumió PairSuccess: a partir de aquí la única
+		// condición pendiente debe ser Connected.
+	case <-time.After(time.Second):
+		t.Fatal("no consumió PairSuccess")
+	}
+	select {
+	case err := <-termino:
+		t.Fatalf("volvió con %v después de PairSuccess: habría arrancado el panel encima del código", err)
+	case <-time.After(40 * time.Millisecond):
+		// Bien: el código sigue siendo la última salida visible.
+	}
+
+	conexion <- nil // events.Connected
+	select {
+	case err := <-termino:
+		if err != nil {
+			t.Fatalf("tras Connected devolvió %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no abrió la barrera después de PairSuccess + Connected")
+	}
+}
+
+func TestEsperarVinculacionExigeTambienPairSuccess(t *testing.T) {
+	ctx, cancelar := context.WithCancel(context.Background())
+	defer cancelar()
+	qr := make(chan whatsmeow.QRChannelItem, 1)
+	conexion := make(chan error, 1)
+	termino := make(chan error, 1)
+	go func() { termino <- esperarVinculacion(ctx, qr, conexion, nil) }()
+
+	conexion <- nil // aunque llegara desordenado, Connected solo no basta
+	select {
+	case err := <-termino:
+		t.Fatalf("volvió solo con Connected (%v), sin confirmar que el teléfono aceptó el código", err)
+	case <-time.After(40 * time.Millisecond):
+	}
+	qr <- whatsmeow.QRChannelSuccess
+	select {
+	case err := <-termino:
+		if err != nil {
+			t.Fatalf("PairSuccess + Connected devolvió %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no terminó al reunir las dos confirmaciones")
+	}
+}
+
+func TestEsperarVinculacionPropagaCaducidadErrorYCancelacion(t *testing.T) {
+	t.Run("caduca", func(t *testing.T) {
+		qr := make(chan whatsmeow.QRChannelItem, 1)
+		qr <- whatsmeow.QRChannelTimeout
+		err := esperarVinculacion(context.Background(), qr, make(chan error), nil)
+		if err == nil || !strings.Contains(err.Error(), "caducó") {
+			t.Fatalf("error = %v; quería caducidad explícita", err)
+		}
+	})
+	t.Run("fallo de conexión", func(t *testing.T) {
+		quiere := errors.New("handshake roto")
+		conexion := make(chan error, 1)
+		conexion <- quiere
+		err := esperarVinculacion(context.Background(), make(chan whatsmeow.QRChannelItem), conexion, nil)
+		if !errors.Is(err, quiere) {
+			t.Fatalf("error = %v; quería %v", err, quiere)
+		}
+	})
+	t.Run("Ctrl+C", func(t *testing.T) {
+		ctx, cancelar := context.WithCancel(context.Background())
+		cancelar()
+		err := esperarVinculacion(ctx, make(chan whatsmeow.QRChannelItem), make(chan error), nil)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v; quería context.Canceled", err)
+		}
+	})
+}
+
 func TestPairDisplayNameEsNavegadorYSO(t *testing.T) {
 	navegadores := []string{"Chrome", "Firefox", "Edge", "IE", "Opera", "Safari", "Electron", "Chrome Mobile"}
 	sistemas := []string{"Linux", "Windows", "Mac OS", "Android", "iOS", "Ubuntu"}
