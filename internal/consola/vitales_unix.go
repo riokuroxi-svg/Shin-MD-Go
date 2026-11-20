@@ -30,3 +30,7 @@ func vitales() (discoUsado, discoTotal, ramUsada, ramTotal uint64) {
 	}
 	return
 }
+
+// runtimeSinTTY: en Windows no se abre /dev/tty (no existe). En unix sí se
+// puede intentar, y es justo lo que salva el caso `curl | sh`.
+func runtimeSinTTY() bool { return false }

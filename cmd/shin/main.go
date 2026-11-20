@@ -19,7 +19,6 @@ import (
 
 	"shin-go/cmds" // sus init() registran los comandos
 
-	"github.com/pterm/pterm"
 	"shin-go/internal/bot"
 	"shin-go/internal/config"
 
@@ -31,7 +30,12 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.21.0"
+var version = "0.22.0"
+
+// numeroDeCodigo es el número pasado en --code, tal cual (se normaliza al
+// usarlo). Vive aquí y no en una variable local de main porque la
+// conversación de vinculación está en vinculacion.go.
+var numeroDeCodigo string
 
 func main() {
 	var (
@@ -48,6 +52,7 @@ func main() {
 		}
 	}
 	_ = flag.CommandLine.Parse(args)
+	numeroDeCodigo = *phone
 
 	if *showVer {
 		fmt.Println("Shin-MD (Go)", version)
@@ -59,7 +64,12 @@ func main() {
 	cmds.SetVersion(version) // .info muestra la versión real del binario
 
 	cfg := config.Load()
-	log := xlog.New(cfg.LogLevel, os.Stdout)
+	// Los logs de la consola pasan por un teletipo: mientras el panel vivo
+	// está en pantalla, se guardan para enseñarlos DENTRO del panel (si se
+	// soltaran sueltos, romperían el dibujo y lo duplicarían en un móvil).
+	historial := &consola.Historial{Max: 40}
+	teletipo := consola.NuevoTeletipo(os.Stdout, historial)
+	log := xlog.New(cfg.LogLevel, teletipo)
 
 	// Termux/Android: sin /etc/resolv.conf el resolvedor puro de Go pregunta
 	// a 127.0.0.1:53 y [::1]:53, donde nadie escucha, y TODA la red muere
@@ -88,7 +98,7 @@ func main() {
 		if rot, err := xlog.AbrirRotativo(cfg.LogFile, 4<<20, 3); err != nil {
 			log.Warn("no se pudo abrir " + cfg.LogFile + ": " + err.Error())
 		} else {
-			log = xlog.NewDoble(cfg.LogLevel, os.Stdout, rot) // consola bonita + archivo grepeable
+			log = xlog.NewDoble(cfg.LogLevel, teletipo, rot) // consola bonita + archivo grepeable
 			defer rot.Cerrar()
 			log.Info("Log: " + cfg.LogFile + " (rotación 4 MB × 3)")
 		}
@@ -115,40 +125,16 @@ func main() {
 	}
 	defer client.Close()
 
-	// ── Vinculación: la regla del JS, calcada ────────────────────────────
-	// Un número escrito a mano (--code <num> / PAIRING_NUMBER) manda siempre
-	// y no se pregunta dos veces. Con sesión registrada y nada forzado, no
-	// se pregunta nada. Con terminal detrás —aunque vengas de «curl | sh»—
-	// se pregunta el número. Sin terminal no se arranca a ciegas: se explica
-	// la orden exacta y se sale, porque seguir acababa en un QR que nadie
-	// pidió y que no se puede escanear desde el propio móvil.
-	codePasado := false
-	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "code" {
-			codePasado = true
+	// ── Vinculación ────────────────────────────────────────────────────
+	// Antes de nada: quién es y cómo entra. Vincular aquí (y no al final)
+	// permite que un número mal escrito se pueda corregir sin arrancar un
+	// bot a medias, y que el menú de QR/código salga cuando toca.
+	if err := vincular(ctx, client, log); err != nil {
+		if ctx.Err() != nil {
+			log.Info("vinculación cancelada")
+			return
 		}
-	})
-	numero := wa.NormalizarTelefono(*phone)
-	if numero == "" {
-		numero = wa.NormalizarTelefono(os.Getenv("PAIRING_NUMBER"))
-	}
-	plan := wa.PlanDeVinculacion(client.LoggedIn(), codePasado, numero, wa.HayTerminal(), "no hay sesión")
-	switch plan.Accion {
-	case wa.AccionNada:
-		log.Info("sesión existente: no hace falta vincular nada.")
-	case wa.AccionUsar:
-		numero = plan.Numero
-		log.Info("vinculando con el número " + plan.Numero + ".")
-	case wa.AccionPreguntar:
-		wa.PanelVinculacion(os.Stdout)
-		numero = wa.PreguntarNumero(os.Stdout)
-		if numero == "" {
-			log.Err("ese número no tiene dígitos usables.")
-			os.Exit(1)
-		}
-		log.Info("vinculando con el número " + numero + ".")
-	case wa.AccionSalir:
-		wa.ExplicarSinTerminal(os.Stderr, plan.Motivo)
+		log.Err("login: " + err.Error())
 		os.Exit(1)
 	}
 
@@ -215,27 +201,6 @@ func main() {
 		despachador.SubmitGroup(evt)
 	})
 
-	// Con sesión ya guardada el Login solo conecta: es el arranque de todos
-	// los días y merece su spinner. Sin sesión, Client.Login lleva el suyo
-	// por dentro (conectar → pedir código) y éste no se enseña.
-	sp := (*pterm.SpinnerPrinter)(nil)
-	if client.LoggedIn() {
-		sp = consola.Spinner(os.Stdout, "conectando con WhatsApp…")
-	}
-	if err := client.Login(ctx, numero); err != nil {
-		if sp != nil {
-			sp.Fail("no hubo conexión")
-		}
-		if ctx.Err() != nil { // Ctrl+C mientras se esperaba el QR
-			log.Info("vinculación cancelada")
-			return
-		}
-		log.Err("login: " + err.Error())
-		os.Exit(1)
-	}
-	if sp != nil {
-		sp.Success("conectado")
-	}
 	if ctx.Err() != nil {
 		return
 	}
@@ -276,15 +241,73 @@ func main() {
 
 	// La caja que cierra el arranque, como en el JS: cuenta, comandos,
 	// prefijos, vitales del equipo y la dirección del panel web.
-	cuenta := client.AccountName()
-	consola.PanelListo(os.Stdout, consola.Listo{
-		Version:  version,
-		Cuenta:   cuenta,
-		Comandos: uniq,
-		Prefijos: cfg.Prefixes,
-		Web:      fmt.Sprintf("http://127.0.0.1:%d", cfg.WebPort),
-		PID:      os.Getpid(),
+	//
+	// Solo se pinta cuando NO va a aparecer la pantalla viva: las dos dicen lo
+	// mismo y en una pantalla de móvil de 50×24 duplicarlo es que el arranque
+	// entero se vaya de arriba con el primer refresco.
+	if !consola.EsTerminal() {
+		consola.PanelListo(os.Stdout, consola.Listo{
+			Version:  version,
+			Cuenta:   client.AccountName(),
+			Comandos: uniq,
+			Prefijos: cfg.Prefixes,
+			Web:      fmt.Sprintf("http://127.0.0.1:%d", cfg.WebPort),
+			PID:      os.Getpid(),
+		})
+	}
+
+	// ── Pantalla viva ──────────────────────────────────────────────────
+	// Un panel que se repinta en su sitio (conexión, cupo, cola, vitales) y
+	// teclas de un carácter mientras el bot corre, sin reiniciar nada:
+	//
+	//	e  enseñar/ocultar el panel
+	//	s  resumen en una línea
+	//	p  qué comandos hay y cómo se usan
+	//	l  últimos avisos
+	//	q  parar (igual que Ctrl+C)
+	//
+	// En un servicio o en un tubo no se enciende: ahí no hay teclas que leer.
+	foto := func() consola.Estado {
+		s := client.Queue.Snapshot()
+		d := despachador.Stats()
+		return consola.Estado{
+			Version: version, Cuenta: client.AccountName(),
+			Conectado: client.Connected(), Prefijos: cfg.Prefixes,
+			Comandos: uniq, Uptime: client.Uptime(),
+			Enviados: s.SentToday, Cupo: s.Budget, EnCola: d.EnCola,
+			Procesados: d.Procesados, Recibidos: d.Recibidos,
+			Web: fmt.Sprintf("http://127.0.0.1:%d", cfg.WebPort),
+		}
+	}
+	enVivo := consola.NuevoPanel(os.Stdout,
+		func() []string { return consola.LineasEstado(foto(), consola.Ancho()-1) },
+		func() []string {
+			// Abajo, los dos últimos avisos: el pulso del bot sin salir del panel.
+			ultimos := historial.Ultimos(2)
+			for i, l := range ultimos {
+				ultimos[i] = consola.Tenue(l)
+			}
+			return ultimos
+		})
+	// El teletipo pregunta al panel para repintarse cuando llega un log; sin
+	// esto, un aviso tardaría hasta 2 s en verse.
+	teletipo.Activar(consola.EsTerminal(), enVivo.Repintar)
+	enVivo.Arrancar(2 * time.Second)
+	defer enVivo.Parar()
+
+	pararAtajos := consola.Atajos(ctx, map[string]func(){
+		"e": func() { enVivo.Ocultar(); teletipo.Activar(false, nil) },
+		"v": func() { teletipo.Activar(consola.EsTerminal(), enVivo.Repintar); enVivo.Mostrar() },
+		"s": func() { enVivo.Ocultar(); consola.Bien(consola.Resumen(foto())) },
+		"p": func() { enVivo.Ocultar(); paqueteDeComandos(uniq, cfg.Prefixes) },
+		"l": func() {
+			enVivo.Ocultar()
+			consola.ImprimirHistorial(os.Stdout, historial.Ultimos(15))
+		},
+		"q":      func() { stop() }, // cancela el contexto: todo cierra limpio
+		"ctrl-c": func() { stop() }, // por si el terminal no deja mandar la señal
 	})
+	defer pararAtajos()
 
 	<-ctx.Done()
 	log.Info("Cerrando limpio…")

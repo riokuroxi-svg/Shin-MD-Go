@@ -17,7 +17,6 @@
 package wa
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"os"
@@ -116,26 +115,29 @@ func esTTY(f *os.File) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-// PreguntarNumero dibuja la petición y lee la respuesta de donde toca:
-// si stdin es terminal, de stdin; si no, de /dev/tty (terminal que hay
-// detrás aunque la entrada esté redirigida —el caso «curl | sh»—).
-// Devuelve el número ya normalizado, o "" si no se pudo leer o no tiene
-// dígitos usables.
+// PreguntarNumero pregunta el número y no se rinde al primer intento: si lo
+// tecleado no tiene dígitos usables lo dice y vuelve a preguntar (hasta 3
+// veces). Antes, un dedazo terminaba en «ese número no tiene dígitos
+// usables» y a empezar de cero.
+//
+// Devuelve el número ya normalizado, o "" si no se pudo leer o se agotaron
+// los intentos. Lee de stdin si es terminal y de /dev/tty si no (el caso
+// «curl | sh», donde hay terminal detrás aunque la entrada esté redirigida).
 func PreguntarNumero(salida io.Writer) string {
-	const pregunta = "  ❯ Número de WhatsApp (ej. +52 1 55 1234 5678): "
-	if esTTY(os.Stdin) {
-		fmt.Fprint(salida, pregunta)
-		linea, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-		return NormalizarTelefono(strings.TrimSpace(linea))
+	const pregunta = "Tu número (ej. +52 1 55 1234 5678):"
+	for intento := 1; intento <= 3; intento++ {
+		resp, err := consola.LeerTexto(salida, pregunta, "")
+		if err != nil {
+			return ""
+		}
+		num := NormalizarTelefono(resp)
+		if num != "" {
+			return num
+		}
+		// Se dice qué se esperaba, no solo que está mal.
+		fmt.Fprintln(salida, "  "+consola.Ambar("✕ no veo un número ahí (país + número, con o sin +)"))
 	}
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = tty.Close() }()
-	fmt.Fprint(tty, pregunta)
-	linea, _ := bufio.NewReader(tty).ReadString('\n')
-	return NormalizarTelefono(strings.TrimSpace(linea))
+	return ""
 }
 
 // ─── dibujo ──────────────────────────────────────────────────────────────
@@ -175,23 +177,82 @@ func PanelVinculacion(w io.Writer) {
 
 // PanelCodigo: el momento importante de todo el arranque. Se dibuja grande,
 // aparte del resto, para que nadie tenga que buscarlo entre líneas de log.
+// Los pasos se numeran con consola.Paso (sakura) para que se lean de un
+// vistazo en la pantalla de un móvil.
 func PanelCodigo(w io.Writer, numero, codigo string) {
 	codigo = FormatearCodigo(codigo)
 	fmt.Fprintln(w)
 	fmt.Fprint(w, consola.Grande(codigo)) // las 8 letras grandes: ES el bot
-	consola.Caja(w, "tu código",
+	consola.Caja(w, "tu código de vinculación",
 		consola.Papel("Escríbelo en el teléfono, así tal cual."),
 		"",
-		consola.Tenue("Caduca en ~60 s. Si expira,"),
-		consola.Tenue("vuelve a arrancar el bot."),
+		consola.Tenue("Caduca en ~60 s. Si expira, vuelve"),
+		consola.Tenue("a arrancar el bot y sale uno nuevo."),
 	)
 	fmt.Fprintln(w)
-	fmt.Fprintf(w, "  %s %s\n", consola.Tenue("cuenta:"), consola.Papel(numero))
-	fmt.Fprintln(w, "  "+consola.Tenue("1.")+" abre WhatsApp en ese teléfono")
-	fmt.Fprintln(w, "  "+consola.Tenue("2.")+" Ajustes › Dispositivos vinculados")
-	fmt.Fprintln(w, "  "+consola.Tenue("3.")+" Vincular un dispositivo › con número")
-	fmt.Fprintln(w, "  "+consola.Tenue("4.")+" teclea el código de arriba")
+	fmt.Fprintf(w, "  %s %s\n\n", consola.Tenue("cuenta:"), consola.Papel(numero))
+	fmt.Fprintln(w, "  "+consola.Paso(1, "abre WhatsApp en ese teléfono"))
+	fmt.Fprintln(w, "  "+consola.Paso(2, "Ajustes › Dispositivos vinculados"))
+	fmt.Fprintln(w, "  "+consola.Paso(3, "Vincular un dispositivo › con número"))
+	fmt.Fprintln(w, "  "+consola.Paso(4, "escribe el código de arriba"))
 	fmt.Fprintln(w)
+}
+
+// PanelQR: la otra forma de vincular, para quien prefiera escanear (un VPS
+// con navegador de terminal, por ejemplo). En el móvil donde corre el bot no
+// sirve — no hay cámara que lo escanee— y por eso el menú lo avisa.
+//
+// `png` (opcional) es donde se guarda el QR como imagen CUANDO EL TERMINAL ES
+// ESTRECHO. Un ref de WhatsApp necesita ~81 columnas; en Termux en vertical
+// (50) dibujarlo lo partiría en dos líneas y ningún lector lo escanearía. Con
+// la imagen en disco el usuario la abre (`termux-open data/vincular-qr.png`) o
+// se la lleva al ordenador, y el bot no se queda sin camino.
+func PanelQR(w io.Writer, codigo, png string) {
+	if consola.DibujarQR(w, codigo, "Escanea con WhatsApp › Dispositivos vinculados › Vincular un dispositivo") {
+		return
+	}
+	necesitas := consola.AnchoQR(codigo)
+	// Una línea por frase, ENVUELTA al ancho real: en Termux un Fprintln largo
+	// se parte por la mitad y se lee fatal.
+	ancho := consola.Ancho() - 6
+	if ancho < 30 {
+		ancho = 30
+	}
+	// `marca` va solo en la primera línea (el «1.»), `pintar` se aplica a
+	// cada línea YA envuelta: colorear antes de envolver metería los escapes
+	// en medio del cálculo del ancho.
+	sin := func(s string) string { return s }
+	linea := func(marca string, pintar func(string) string, s string) {
+		for i, l := range consola.Envolver(s, ancho) {
+			if i == 0 {
+				fmt.Fprintln(w, "  "+marca+pintar(l))
+				continue
+			}
+			fmt.Fprintln(w, "    "+pintar(l))
+		}
+	}
+	fmt.Fprintln(w)
+	linea("", consola.Ambar, fmt.Sprintf("el QR necesita %d columnas y tu terminal tiene %d: dibujarlo aquí lo partiría y no escanearía.", necesitas, consola.Ancho()))
+	linea("", consola.Tenue, "tres salidas, la que te venga bien:")
+	linea(consola.Paso(1, ""), sin, fmt.Sprintf("ensancha la ventana (o gira el teléfono) a %d columnas y vuelve a arrancar", necesitas+2))
+	if png != "" {
+		switch err := consola.GuardarQRPNG(png, codigo); {
+		case err != nil:
+			linea(consola.Paso(2, ""), sin, "guardar el QR en imagen falló: "+err.Error())
+		case esTermux():
+			linea(consola.Paso(2, ""), sin, "ábrelo con la galería:   "+consola.Sakura("termux-open "+png))
+		default:
+			linea(consola.Paso(2, ""), sin, "cópialo y ábrelo en el ordenador: "+consola.Sakura(png))
+		}
+	}
+	linea(consola.Paso(3, ""), sin, "o elige 1) Código de 8 letras, que no necesita escanear nada")
+	fmt.Fprintln(w)
+}
+
+// esTermux: mismo criterio que en cmd/shin (se vuelve a comprobar aquí para no
+// depender de que quien llama lo sepa).
+func esTermux() bool {
+	return strings.Contains(os.Getenv("PREFIX"), "/com.termux/") || os.Getenv("TERMUX_APP_PACKAGE") != ""
 }
 
 // ExplicarSinTerminal: cuando no hay dónde preguntar (servicio, tubo, ssh

@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -33,6 +34,17 @@ import (
 	"shin-go/internal/consola"
 	"shin-go/internal/xlog"
 )
+
+// PairDisplayName es cómo se presenta el bot en «Dispositivos vinculados».
+//
+// OJO: WhatsApp valida este campo. whatsmeow lo documenta en PairPhone
+// («must be formatted as `Browser (OS)`, and only common browsers/OSes are
+// allowed, the server will validate it and return 400 if it's wrong») y
+// antes aquí ponía «Shin-MD (Go)», que NO cumple el formato: WhatsApp
+// contestaba «info query returned status 400: bad-request» y nunca emitía
+// el código de 8 letras. «Chrome (Linux)» es el valor que mautrix-whatsapp
+// usa en producción; el SO es solo una etiqueta para la validación.
+const PairDisplayName = "Chrome (Linux)"
 
 type Client struct {
 	waClient  *whatsmeow.Client
@@ -50,6 +62,11 @@ type Client struct {
 
 	onMessage   func(ctx context.Context, msg *IncomingMessage)
 	onGroupInfo func(ctx context.Context, evt *GroupChange)
+
+	// qrVisible: el usuario eligió vincular por QR en el menú. Solo entonces
+	// se dibuja el código en la terminal; con código de 8 letras no se pinta
+	// nada (sería ruido y un QR que nadie va a escanear).
+	qrVisible atomic.Bool
 }
 
 // New abre la base de sesión y construye el cliente. No se conecta todavía.
@@ -102,6 +119,12 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityS
 	// de red. whatsmeow reconecta; aquí solo se avisa y se deja registro.
 	cli.AddEventHandler(func(raw any) {
 		switch evt := raw.(type) {
+		case *events.QR:
+			// Solo llegan si hay un canal de QR activo y no hay sesión. Se
+			// dibuja únicamente cuando el usuario pidió el QR en el menú.
+			if c.qrVisible.Load() && len(evt.Codes) > 0 {
+				PanelQR(os.Stdout, evt.Codes[0], c.rutaQR())
+			}
 		case *events.Connected:
 			log.Ok("Conectado a WhatsApp")
 		case *events.Disconnected:
@@ -187,6 +210,86 @@ func (c *Client) Close() {
 	}
 }
 
+// MetodoDeVinculacion: cómo se vinculó el bot en este arranque.
+type MetodoDeVinculacion int
+
+const (
+	// VinculacionCodigo: código de 8 letras (el camino normal en Termux).
+	VinculacionCodigo MetodoDeVinculacion = iota
+	// VinculacionQR: se dibuja el QR y se escanea desde otro teléfono.
+	VinculacionQR
+)
+
+// LoginPorQR: el otro camino para vincular sin escribir nada en el teléfono.
+// Dibuja el QR en la terminal y espera a que se escanee; al terminar deja el
+// cliente conectado, igual que Login.
+//
+// Aquí SÍ se usa el canal de QR de verdad (no solo como señal de «ya
+// conectado»): cada código que emite whatsmeow se pinta. Cuando el canal
+// manda «success», la sesión quedó guardada en SQLite y el bot sigue solo.
+func (c *Client) LoginPorQR(ctx context.Context) error {
+	if c.LoggedIn() {
+		return c.waClient.Connect()
+	}
+	qr, err := c.waClient.GetQRChannel(ctx)
+	if err != nil {
+		return fmt.Errorf("preparar vinculación por QR: %w", err)
+	}
+	c.qrVisible.Store(true)
+	defer c.qrVisible.Store(false)
+	// El PNG es un plano de un solo uso: se borra al terminar (se vincule o no)
+	// para que nadie escanee mañana un código caducado creyendo que vale.
+	rutaQR := c.rutaQR()
+	defer func() { _ = os.Remove(rutaQR) }()
+
+	sp := consola.Spinner(os.Stdout, "abriendo la vinculación por QR…")
+	if err := c.waClient.Connect(); err != nil {
+		if sp != nil {
+			sp.Fail("no hubo conexión")
+		}
+		return fmt.Errorf("conectar para vincular: %w", err)
+	}
+	if sp != nil {
+		sp.Success("vinculación abierta")
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case item, abierto := <-qr:
+			if !abierto {
+				return fmt.Errorf("la vinculación se cerró sin escanear el QR")
+			}
+			switch item.Event {
+			case whatsmeow.QRChannelEventCode:
+				// El evento QR (con el código) ya lo pinta el manejador de
+				// eventos; aquí solo se evita el bucle cerrado.
+				continue
+			case whatsmeow.QRChannelSuccess.Event:
+				consola.Bien("¡vinculado! el bot queda conectado")
+				return nil
+			case whatsmeow.QRChannelTimeout.Event:
+				return fmt.Errorf("el QR caducó sin escanearse; vuelve a arrancar el bot")
+			default:
+				if item.Error != nil {
+					return fmt.Errorf("vinculación por QR: %w", item.Error)
+				}
+				return fmt.Errorf("vinculación por QR interrumpida (%s)", item.Event)
+			}
+		}
+	}
+}
+
+// drenarCanalQR tira los códigos QR que no se usan hasta que la
+// vinculación termina. Si no se drena, el canal (8 posiciones) se llena, el
+// emisor de QR se planta y el pre-login deja de rotar códigos: el bot se
+// queda esperando un emparejamiento que ya no avanza.
+func drenarCanalQR(ch <-chan whatsmeow.QRChannelItem) {
+	for range ch {
+	}
+}
+
 // Login: si ya hay sesión, conecta; sin sesión EXIGE el número y vincula
 // por código de 8 letras. El QR se retiró de la consola, como en el JS:
 // el bot corre en el propio móvil que llevaría la cuenta —no hay cámara
@@ -201,19 +304,54 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 		return fmt.Errorf("sin sesión y sin número: la vinculación es por código (--code 521… o PAIRING_NUMBER=521…)")
 	}
 	// whatsmeow NO conecta él solo para emparejar («websocket not connected»):
-	// primero entra el socket, y con número ya puesto el QR ni se genera;
-	// luego se pide el código. El cliente queda ya conectado al volver.
+	// primero entra el socket y luego se pide el código, pero solo cuando el
+	// pre-login está LISTO. Hay dos piezas que se encargan de eso:
+	//
+	//	· GetQRChannel (antes de Connect) espera internamente a que el
+	//	  servidor mande el primer <pair-device> y emite los códigos QR.
+	//	  Sin él se pedía el código justo después del noise handshake, y
+	//	  WhatsApp contestaba «info query returned status 400: bad-request».
+	//	· El primer item del canal (un QR cualquiera) es la señal de «ya».
+	//
+	// Del canal solo interesa el primer evento: el QR no se dibuja (en el
+	// móvil donde corre el bot no hay cámara que lo escanee) y los errores
+	// de vinculación se siguen viendo en el resto de la consola.
 	sp := consola.Spinner(os.Stdout, "conectando con WhatsApp…")
+	qr, err := c.waClient.GetQRChannel(ctx)
+	if err != nil && !errors.Is(err, whatsmeow.ErrQRStoreContainsID) {
+		if sp != nil {
+			sp.Fail("no hubo conexión")
+		}
+		return fmt.Errorf("preparar vinculación por código: %w", err)
+	}
+	if qr != nil {
+		// El canal solo cierra cuando termina la vinculación; se drena en
+		// segundo plano para que un QR que caduca no lo llene ni lo bloquee.
+		defer func() { go drenarCanalQR(qr) }()
+	}
 	if err := c.waClient.Connect(); err != nil {
 		if sp != nil {
 			sp.Fail("no hubo conexión")
 		}
 		return fmt.Errorf("conectar para vincular: %w", err)
 	}
+	if qr != nil {
+		select {
+		case _, abierto := <-qr: // primer QR = pre-login listo
+			if !abierto {
+				c.Log.Warn("el canal de vinculación se cerró antes de tiempo; se pide el código de todos modos")
+			}
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(45 * time.Second):
+			// Sin señal seguimos igual: mejor pedir el código que rendirse.
+			c.Log.Warn("no llegó el evento QR a tiempo; se pide el código de todos modos")
+		}
+	}
 	if sp != nil {
 		sp.UpdateText("pidiendo tu código…")
 	}
-	code, err := c.waClient.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, "Shin-MD (Go)")
+	code, err := c.waClient.PairPhone(ctx, phone, true, whatsmeow.PairClientChrome, PairDisplayName)
 	if err != nil {
 		if sp != nil {
 			sp.Fail("no llegó el código")
@@ -446,6 +584,16 @@ func (c *Client) Config() config.Config { return c.cfg }
 
 // Prefixes / FirstPrefix: el router y los comandos leen los prefijos del .env.
 func (c *Client) Prefixes() []string { return c.cfg.Prefixes }
+
+// rutaQR: donde se guarda el QR en imagen cuando el terminal es demasiado
+// estrecho para dibujarlo (Termux en vertical). Va en el StateDir porque es
+// donde el usuario ya tiene lo demás (auth.db, logs).
+func (c *Client) rutaQR() string {
+	if c.cfg.StateDir == "" {
+		return "vincular-qr.png"
+	}
+	return filepath.Join(c.cfg.StateDir, "vincular-qr.png")
+}
 
 func (c *Client) FirstPrefix() string {
 	if len(c.cfg.Prefixes) == 0 {

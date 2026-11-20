@@ -29,6 +29,9 @@ var (
 	stMenta  = pterm.NewStyle(pterm.FgLightGreen)
 	stRojo   = pterm.NewStyle(pterm.FgLightRed, pterm.Bold)
 	stAmbar  = pterm.NewStyle(pterm.FgLightYellow)
+	// stSakuraFuerte: el mismo rosa con negrita, para la opción activa del
+	// menú y la cabecera del panel.
+	stSakuraFuerte = pterm.NewStyle(pterm.FgLightMagenta, pterm.Bold)
 )
 
 var coloresOn = term.IsTerminal(int(os.Stdout.Fd())) &&
@@ -164,6 +167,12 @@ func Caja(w io.Writer, titulo string, lineas ...string) {
 // con códigos ANSI que no cuentan). Una palabra que sola exceda el límite
 // se parte. Aquí jamás se rompe una línea coloreada a la mitad, porque el
 // corte responde a lo que el ojo mide, no a los bytes del escape.
+// Envolver parte un texto en líneas de a lo sumo `limite` columnas. Se
+// exporta porque los paneles de otros paquetes (vinculación, avisos) necesitan
+// el mismo criterio: en Termux, una línea larga se parte por la mitad y
+// queda ilegible a media frase.
+func Envolver(s string, limite int) []string { return envolver(s, limite) }
+
 func envolver(s string, limite int) []string {
 	if limite <= 0 {
 		return []string{s}
@@ -324,6 +333,24 @@ func Spinner(w io.Writer, texto string) *pterm.SpinnerPrinter {
 	return nil
 }
 
+// pelarEstilo quita un estilo uniforme: devuelve el prefijo de estilo, el
+// texto limpio y si era uniforme (estilo al principio, reset al final, nada
+// más en medio).
+func pelarEstilo(s string) (estilo, limpio string, ok bool) {
+	if !strings.HasPrefix(s, "\x1b[") {
+		return "", s, false
+	}
+	fin := strings.Index(s, "m")
+	if fin < 0 {
+		return "", s, false
+	}
+	estilo, resto := s[:fin+1], s[fin+1:]
+	if !strings.HasSuffix(resto, "\x1b[0m") || strings.Contains(resto[:len(resto)-4], "\x1b[") {
+		return "", s, false
+	}
+	return estilo, strings.TrimSuffix(resto, "\x1b[0m"), true
+}
+
 // ─── semáforos de prefijo (los tags [INFO]/[OK]/…) del log bonito ────────
 
 // Prefijo devuelve el mensaje ya con su tag de nivel estilo herramienta:
@@ -342,7 +369,47 @@ func Prefijo(w io.Writer, hora, tag, msg string) {
 		pp = pterm.Debug
 	}
 	pp.Writer = w
-	pp.Println(stTenue.Sprint(hora+"  ") + msg)
+	pp.Println(stTenue.Sprint(hora+"  ") + alinear(hora, msg))
+}
+
+// sangríaLog: columnas que reserva pterm en cada línea de continuación del
+// mensaje (el tag con su barra). Está MEDIDO sobre su impresor, no estimado:
+// si se calcula por encima, la línea vuelve a salirse de la pantalla y se corta
+// a media palabra, que es justo lo que se quiere evitar.
+const sangríaLog = 22
+
+// alinear parte el mensaje para que quepa en la terminal.
+//
+// pterm NO envuelve el texto largo (lo parte el terminal, a mitad de palabra),
+// pero sí sangra por sí solo lo que venga después de un «\n» dentro del
+// mensaje. Con esa sangría puesta, aquí únicamente se parte el texto: no se
+// añade indentación propia. En Termux (50 columnas) un aviso de tres renglones
+// se lee de corrido en vez de quedar hecho un rompecabezas.
+func alinear(hora, msg string) string {
+	ancho := Ancho()
+	// A partir de 16 columnas de texto útil merece la pena partir; por debajo
+	// (una consola de 38) cada renglón sería de dos palabras y se lee peor que
+	// el corte del propio terminal.
+	if !coloresOn || ancho < sangríaLog+16 {
+		return msg
+	}
+	// Si el mensaje va entero de un color (así lo manda xlog), se quita el
+	// estilo antes de medir: envolver texto con ANSI dentro cuenta los escapes
+	// como si fueran letras y el cálculo se va al doble.
+	plano, estilo := msg, ""
+	if e, limpio, ok := pelarEstilo(msg); ok {
+		plano, estilo = limpio, e
+	}
+	lineas := envolver(plano, ancho-sangríaLog)
+	if len(lineas) < 2 {
+		return msg
+	}
+	if estilo != "" {
+		for i := range lineas {
+			lineas[i] = estilo + lineas[i] + "\x1b[0m"
+		}
+	}
+	return strings.Join(lineas, "\n")
 }
 
 var ptermInfo = pterm.Info

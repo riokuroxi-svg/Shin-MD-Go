@@ -9,3 +9,6 @@
 package consola
 
 func vitales() (discoUsado, discoTotal, ramUsada, ramTotal uint64) { return 0, 0, 0, 0 }
+
+// runtimeSinTTY: en Windows no hay /dev/tty que abrir detrás de stdin.
+func runtimeSinTTY() bool { return true }

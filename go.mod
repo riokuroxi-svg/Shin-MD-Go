@@ -8,6 +8,7 @@ require (
 	github.com/pterm/pterm v0.12.84
 	go.mau.fi/whatsmeow v0.0.0-20261013142727-4cf8bc8e0aeb
 	golang.org/x/image v0.24.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.46.0
 	google.golang.org/protobuf v1.36.12
 	modernc.org/sqlite v1.62.0
@@ -40,7 +41,6 @@ require (
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	modernc.org/libc v1.81.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect

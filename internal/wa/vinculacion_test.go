@@ -5,6 +5,7 @@
 package wa
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -93,5 +94,26 @@ func TestPanelesNoRompiyContienenLoImportante(t *testing.T) {
 		if !strings.Contains(s, trozo) {
 			t.Fatalf("la explicación sin terminal debe contener %q\n%s", trozo, s)
 		}
+	}
+}
+
+// TestPairDisplayNameEsNavegadorYSO: WhatsApp valida el nombre visible del
+// compañero al pedir el código (PairPhone) y contesta 400 bad-request si no
+// cumple «Navegador (SO)». Aquí ponía «Shin-MD (Go)»: ningún número podía
+// vincularse. La prueba falla si alguien vuelve a poner un nombre libre.
+func TestPairDisplayNameEsNavegadorYSO(t *testing.T) {
+	navegadores := []string{"Chrome", "Firefox", "Edge", "IE", "Opera", "Safari", "Electron", "Chrome Mobile"}
+	sistemas := []string{"Linux", "Windows", "Mac OS", "Android", "iOS", "Ubuntu"}
+
+	navegador, sistema, cumple := strings.Cut(PairDisplayName, " (")
+	sistema = strings.TrimSuffix(sistema, ")")
+	if !cumple || !strings.HasSuffix(PairDisplayName, ")") {
+		t.Fatalf("PairDisplayName = %q, el formato tiene que ser «Navegador (SO)»", PairDisplayName)
+	}
+	if !slices.Contains(navegadores, navegador) {
+		t.Errorf("navegador %q no es de los que WhatsApp acepta (%v)", navegador, navegadores)
+	}
+	if !slices.Contains(sistemas, sistema) {
+		t.Errorf("sistema %q no es de los que WhatsApp acepta (%v)", sistema, sistemas)
 	}
 }

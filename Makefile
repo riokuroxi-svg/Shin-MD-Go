@@ -2,7 +2,7 @@
 # Uso: make build · make termux · make test · make run
 
 BIN      := shin
-VERSION  := 0.21.0
+VERSION  := 0.22.0
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 GOFLAGS  := -trimpath
 
@@ -15,7 +15,7 @@ export CGO_ENABLED=0
 GOFLAGS += -buildvcs=false
 endif
 
-.PHONY: build run test vet fmt termux windows clean
+.PHONY: build run test vet fmt termux linux windows release clean
 
 build:
 	go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o dist/$(BIN) ./cmd/shin
@@ -26,6 +26,13 @@ run:
 # Binario estático para Termux/Android (sin cgo, sin dependencias)
 termux:
 	GOOS=linux GOARCH=arm64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o dist/$(BIN)-termux-arm64 ./cmd/shin
+
+# VPS de toda la vida (x86_64, sin cgo: corre también en distros mínimas)
+linux:
+	GOOS=linux GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o dist/$(BIN)-linux-amd64 ./cmd/shin
+
+# Los dos binarios que se copian a mano (el de Termux y el del VPS)
+release: termux linux
 
 windows:
 	GOOS=windows GOARCH=amd64 go build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o dist/$(BIN).exe ./cmd/shin

@@ -101,12 +101,24 @@ func handlerTexto(lv slog.Level, w io.Writer) slog.Handler {
 	})
 }
 
+// esConsola: ¿este writer acaba en una terminal con color? Un *os.File se
+// comprueba; un consola.Teletipo (el que deja al panel vivo pintar los logs
+// dentro de sí mismo) se cree: él ya sabe si hay terminal y a dónde ir.
+func esConsola(w io.Writer) bool {
+	type teletipo interface{ EsTeletipo() bool }
+	if t, ok := w.(teletipo); ok {
+		return t.EsTeletipo() && consola.ConColor()
+	}
+	f, ok := w.(*os.File)
+	return ok && consola.ConColor() && term.IsTerminal(int(f.Fd()))
+}
+
 func New(level string, w io.Writer) *Logger {
 	if w == nil {
 		w = os.Stdout
 	}
 	lv := nivelDe(level)
-	if f, ok := w.(*os.File); ok && consola.ConColor() && term.IsTerminal(int(f.Fd())) {
+	if esConsola(w) {
 		return &Logger{slog.New(handlerConsola{min: lv, w: w})}
 	}
 	return &Logger{slog.New(handlerTexto(lv, w))}
