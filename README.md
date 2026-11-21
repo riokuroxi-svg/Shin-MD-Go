@@ -70,7 +70,7 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 | Comando | Qué hace |
 |---|---|
-| `.menu` / `.menucat` | «Nube de Shin»: portada con botones nativos y categorías en listas paginadas |
+| `.menu` / `.menucat` | «Nube de Shin»: ficha dinámica del bot y usuario, botones nativos y categorías paginadas |
 | `.ping` | latencia real de recepción, uptime, estado de conexión y de la cola (con botones) |
 | `.work` · `.daily` · `.weekly` · `.monthly` | ganas dinero: 2 000–4 000 por turno y rachas de hasta 1 015 000 |
 | `.botones` | banco de pruebas: quick_reply, cta_url, cta_copy, cta_call |
@@ -205,6 +205,7 @@ archivo, así que `OWNERS=521… ./shin` sigue funcionando.
 ```env
 BOT_NAME=SHIN-MD      # nombre que aparece en el menú y en .info
 MENU_IMAGE=0          # 1 = .menu sale como imagen dibujada
+MENU_WEATHER_CITY="Mexico City"  # ciudad del clima de la ficha textual
 OWNER_NAME=Roxi       # cómo te llama .owner
 OWNER_NUMBER=52155…   # número para los botones de llamar/WhatsApp
 BOT_PREFIX=".,/,!,+"
@@ -355,6 +356,13 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.25.0-rc2** — **la ficha textual del bot de JavaScript, sin imágenes**:
+  la portada principal muestra saludo, nombre del usuario, versión real,
+  motor whatsmeow, uptime, clima, comandos únicos, rango, teléfono y prefijo.
+  Conserva los botones, las listas paginadas y la degradación automática a
+  texto. El pie pequeño enlaza el repositorio del bot de JavaScript. El clima
+  usa Open-Meteo con plazo de tres segundos y caché de diez minutos. Detalles
+  en [`docs/MENU-0.25.0-RC2.md`](docs/MENU-0.25.0-RC2.md).
 - **0.25.0-rc1** — **«Nube de Shin», candidato para probar en teléfono**: la
   portada de `.menu` adopta el diseño con nube, ala y estrella, nombre Unicode,
   saludo y resumen legible. Las dos rutas principales quedan a la vista y las

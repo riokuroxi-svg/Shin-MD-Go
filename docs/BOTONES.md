@@ -97,7 +97,7 @@ INTERACTIVE_STRATEGIES=texto
 
 | Comando | Contenido |
 |---|---|
-| `.menu` | portada «Nube de Shin»; dos accesos visibles y hoja inferior «Ver todo» |
+| `.menu` | ficha «Nube de Shin»; dos accesos visibles y hoja inferior «Ver todo» |
 | `.menucat` | `ListMessage` paginado: máximo 10 filas y selección por categoría |
 | `.botones` | quick reply, URL, copiar y llamada |
 | `.lista` | `ListMessage` directo + nodo `product_list`, dos secciones |

@@ -10,8 +10,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"shin-go/internal/bot"
+	"shin-go/internal/wa"
 )
 
 func init() {
@@ -49,19 +51,24 @@ func init() {
 				return c.ReplyPriority(menuCompacto(c, unique, aliases))
 			}
 
-			body := menuNubeBody(
-				c.Bot.Config().BotName,
-				nombre(c),
-				unique,
-				aliases,
-				bot.HookCount(),
-				c.Bot.Prefixes(),
-			)
+			body := menuNubeBody(menuNubeData{
+				Greeting: menuGreeting(time.Now()),
+				BotName:  menuBotName(c.Bot.Config().BotName),
+				Version:  version,
+				Engine:   "whatsmeow Multi-Device",
+				Uptime:   menuUptime(c.Bot.Uptime()),
+				Weather:  menuWeather(c.Ctx, c.Bot.Config().WeatherCity),
+				Commands: unique,
+				UserName: menuUserName(c.PushName),
+				Role:     menuUserRole(c),
+				Number:   menuUserNumber(c),
+				Prefix:   bot.Esc(c.Bot.FirstPrefix()),
+			})
 
 			return c.ReplyMenu(
 				"☁️ "+bot.CleanName(c.Bot.Config().BotName, 24),
 				body,
-				"✧ Elige una ruta · también puedes escribir "+c.Bot.FirstPrefix()+"menu <categoría>",
+				menuFooter,
 				menuNubeButtons(c.Bot.FirstPrefix())...,
 			)
 		},
@@ -109,56 +116,125 @@ func init() {
 	})
 }
 
-// menuNubeBody es la portada de la variante v1. Solo usa texto y formato que
-// WhatsApp conserva en Android, iOS y Web: los glifos decorativos no dependen
-// de una fuente externa y el nombre del usuario siempre llega saneado.
-func menuNubeBody(botName, persona string, unicos, alias, hooks int, prefijos []string) string {
-	if strings.TrimSpace(persona) == "" {
-		persona = "*viajero*"
-	}
-	listaPrefijos := strings.Join(prefijos, " · ")
-	if listaPrefijos == "" {
-		listaPrefijos = "."
-	}
+const (
+	menuChannelURL = "https://whatsapp.com/channel/0029VbDVFpSGJP89hfZUe522"
+	menuFooter     = "Shin-MD • Bot de WhatsApp Profesional\ngithub.com/riokuroxi-svg/Shin-MD"
+)
 
+type menuNubeData struct {
+	Greeting string
+	BotName  string
+	Version  string
+	Engine   string
+	Uptime   string
+	Weather  string
+	Commands int
+	UserName string
+	Role     string
+	Number   string
+	Prefix   string
+}
+
+// menuNubeBody conserva el texto de la variante principal del bot de JS,
+// pero usa los datos reales de este proceso Go. No lleva banner ni otra media.
+func menuNubeBody(d menuNubeData) string {
 	var b strings.Builder
-	b.WriteString("╭── ⋅ ──  ☁️  ✧  🪽  ── ⋅ ──╮\n\n")
-	fmt.Fprintf(&b, "       *%s*\n", menuNubeNombre(botName))
-	b.WriteString("     反魂 · *NÚCLEO EN GO*\n\n")
-	b.WriteString("╰── ⋅ ──  ★  ── ⋅ ──╯\n\n")
-	fmt.Fprintf(&b, "✦ Hola, %s.\n", persona)
-	b.WriteString("Tu espacio está listo. ¿A dónde vamos?\n\n")
-	b.WriteString("╭─「 *RESUMEN* 」\n")
-	fmt.Fprintf(&b, "│ %d comandos · %d nombres\n", unicos, alias)
-	fmt.Fprintf(&b, "│ %d hooks activos\n", hooks)
-	fmt.Fprintf(&b, "│ Prefijos · %s\n", listaPrefijos)
-	b.WriteString("╰──────────────\n\n")
-	b.WriteString("_Elige una ruta en los botones de abajo._")
+	fmt.Fprintf(&b, "%s\n\n", d.Greeting)
+	fmt.Fprintf(&b, "      *%s*\n\n", d.UserName)
+	b.WriteString("╭┈┈⫹⫺ *INFORMACIÓN SHIN-MD* ⫹⫺┈┈╮\n")
+	fmt.Fprintf(&b, "│ ◈ *Nombre* : *%s*\n", d.BotName)
+	fmt.Fprintf(&b, "│ ◈ *Versión* : *%s*\n", d.Version)
+	fmt.Fprintf(&b, "│ ◈ *Motor* : `%s`\n", d.Engine)
+	fmt.Fprintf(&b, "│ ◈ *Uptime* : *%s*\n", d.Uptime)
+	fmt.Fprintf(&b, "│ ◈ *Clima* : %s\n", d.Weather)
+	fmt.Fprintf(&b, "│ ◈ *Comandos* : *%d únicos*\n", d.Commands)
+	b.WriteString("╰┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈╯\n\n")
+
+	b.WriteString("╭┈┈⫹⫺ *INFORMACIÓN USUARIO* ⫹⫺┈┈╮\n")
+	fmt.Fprintf(&b, "│ ◈ *Nombre* : *%s*\n", d.UserName)
+	fmt.Fprintf(&b, "│ ◈ *Rango* : *%s*\n", d.Role)
+	fmt.Fprintf(&b, "│ ◈ *Número* : %s\n", d.Number)
+	fmt.Fprintf(&b, "│ ◈ *Prefijo* : `%s`\n", d.Prefix)
+	b.WriteString("╰┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈╯\n\n")
+
+	b.WriteString("╭──〔 📌 *GUÍA RÁPIDA* 〕──⬣\n")
+	b.WriteString("│ 🅞 Dueño • 🅟 Premium • 🅐 Admin\n")
+	b.WriteString("│ 🅖 Grupos • 🅛 Límite\n")
+	b.WriteString("╰─────────────────────────⬣\n\n")
+	b.WriteString("_Selecciona una categoría en el botón desplegable de abajo para ver sus comandos._\n\n")
+	fmt.Fprintf(&b, "📢 *Canal:* %s", menuChannelURL)
 	return b.String()
 }
 
-// menuNubeNombre da presencia al título sin prometer una tipografía que
-// WhatsApp no permite elegir. Los caracteres fullwidth sí forman parte del
-// mensaje y se ven igual aunque el teléfono use otra fuente del sistema.
-func menuNubeNombre(name string) string {
-	name = bot.CleanName(name, 24)
-	if name == "" {
-		name = "SHIN-MD"
+func menuBotName(name string) string {
+	if name = bot.CleanName(name, 24); name != "" {
+		return strings.ToUpper(name)
 	}
-	name = strings.ToUpper(name)
+	return "SHIN-MD"
+}
 
-	var b strings.Builder
-	for _, r := range name {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r + 0xFEE0)
-		case r == '-':
-			b.WriteRune('–')
-		default:
-			b.WriteRune(r)
-		}
+func menuUserName(name string) string {
+	if name = bot.CleanName(name, 32); name != "" {
+		return name
 	}
-	return b.String()
+	return "Usuario"
+}
+
+func menuGreeting(now time.Time) string {
+	switch hour := now.Hour(); {
+	case hour >= 5 && hour < 12:
+		return "¡Buenos Días! 🌅"
+	case hour >= 12 && hour < 19:
+		return "¡Buenas Tardes! ☀️"
+	default:
+		return "¡Buenas Noches! 🌙"
+	}
+}
+
+func menuUserRole(c *bot.Context) string {
+	switch {
+	case c.IsOwner:
+		return "👑 Creador / Owner"
+	case c.IsGroup && c.Admin():
+		return "🛡️ Administrador"
+	default:
+		return "👤 Usuario"
+	}
+}
+
+func menuUserNumber(c *bot.Context) string {
+	jid := c.Identity.PN
+	if jid.IsEmpty() && c.Sender.Server == wa.DefaultUserServer {
+		jid = c.Sender
+	}
+	if jid.IsEmpty() && c.SenderAlt.Server == wa.DefaultUserServer {
+		jid = c.SenderAlt
+	}
+	if number := bot.NormalizeNumber(jid.User); number != "" {
+		return "+" + number
+	}
+	return "No disponible"
+}
+
+func menuUptime(d time.Duration) string {
+	seconds := max(int64(d/time.Second), 0)
+	days := seconds / 86400
+	hours := (seconds % 86400) / 3600
+	minutes := (seconds % 3600) / 60
+	seconds %= 60
+
+	parts := make([]string, 0, 4)
+	if days > 0 {
+		parts = append(parts, strconv.FormatInt(days, 10)+"d")
+	}
+	if hours > 0 {
+		parts = append(parts, strconv.FormatInt(hours, 10)+"h")
+	}
+	if minutes > 0 {
+		parts = append(parts, strconv.FormatInt(minutes, 10)+"m")
+	}
+	parts = append(parts, strconv.FormatInt(seconds, 10)+"s")
+	return strings.Join(parts, " ")
 }
 
 // menuNubeButtons mantiene dos accesos principales a la vista. Al haber más

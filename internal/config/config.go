@@ -61,6 +61,7 @@ type Config struct {
 	StickerPack string        // STICKER_PACK: nombre del paquete en el sticker
 	StickerAuth string        // STICKER_AUTHOR: autor que se ve al abrir el sticker
 	MenuImage   bool          // MENU_IMAGE=1: el .menu manda imagen de cabecera
+	WeatherCity string        // MENU_WEATHER_CITY: ciudad del clima en el menú textual
 	OwnerName   string        // OWNER_NAME: cómo se llama el dueño en .owner
 	OwnerNumber string        // OWNER_NUMBER: número para el botón de llamada
 
@@ -178,6 +179,7 @@ func LoadFrom(envPath string) Config {
 		StickerAuth:     vars.str("STICKER_AUTHOR", "riokuroxi-svg"),
 		LogFile:         vars.str("LOG_FILE", filepath.Join(stateDir, "shin.log")),
 		MenuImage:       vars.str("MENU_IMAGE", "0") == "1",
+		WeatherCity:     vars.str("MENU_WEATHER_CITY", "Mexico City"),
 		OwnerName:       vars.str("OWNER_NAME", "el dueño"),
 		OwnerNumber:     vars.str("OWNER_NUMBER", ""),
 		GeminiKey:       vars.str("GEMINI_KEY", ""),

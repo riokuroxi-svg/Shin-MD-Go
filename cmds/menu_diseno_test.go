@@ -2,50 +2,158 @@
 package cmds
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"shin-go/internal/bot"
+	"shin-go/internal/wa"
 )
 
-func TestMenuNubeConservaElDisenoAprobado(t *testing.T) {
-	got := menuNubeBody(
-		"Shin-MD",
-		"*Ginko*",
-		213,
-		748,
-		5,
-		[]string{".", "/", "#", "!"},
-	)
+func TestMenuPrincipalConservaElTextoDelBotJS(t *testing.T) {
+	got := menuNubeBody(menuNubeData{
+		Greeting: "¡Buenas Noches! 🌙",
+		BotName:  "SHIN-MD",
+		Version:  "0.25.0-rc2",
+		Engine:   "whatsmeow Multi-Device",
+		Uptime:   "1h 2m 3s",
+		Weather:  "⛅ Parcialmente nublado | 🌡️ 18°C",
+		Commands: 137,
+		UserName: "Rin",
+		Role:     "👑 Creador / Owner",
+		Number:   "+5210000000000",
+		Prefix:   ".",
+	})
 
-	for _, want := range []string{
-		"╭── ⋅ ──  ☁️  ✧  🪽  ── ⋅ ──╮",
-		"*ＳＨＩＮ–ＭＤ*",
-		"反魂 · *NÚCLEO EN GO*",
-		"╰── ⋅ ──  ★  ── ⋅ ──╯",
-		"Hola, *Ginko*",
-		"213 comandos · 748 nombres",
-		"5 hooks activos",
-		"Prefijos · . · / · # · !",
-		"Elige una ruta en los botones de abajo",
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("el menú no contiene %q:\n%s", want, got)
-		}
+	want := "¡Buenas Noches! 🌙\n\n" +
+		"      *Rin*\n\n" +
+		"╭┈┈⫹⫺ *INFORMACIÓN SHIN-MD* ⫹⫺┈┈╮\n" +
+		"│ ◈ *Nombre* : *SHIN-MD*\n" +
+		"│ ◈ *Versión* : *0.25.0-rc2*\n" +
+		"│ ◈ *Motor* : `whatsmeow Multi-Device`\n" +
+		"│ ◈ *Uptime* : *1h 2m 3s*\n" +
+		"│ ◈ *Clima* : ⛅ Parcialmente nublado | 🌡️ 18°C\n" +
+		"│ ◈ *Comandos* : *137 únicos*\n" +
+		"╰┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈╯\n\n" +
+		"╭┈┈⫹⫺ *INFORMACIÓN USUARIO* ⫹⫺┈┈╮\n" +
+		"│ ◈ *Nombre* : *Rin*\n" +
+		"│ ◈ *Rango* : *👑 Creador / Owner*\n" +
+		"│ ◈ *Número* : +5210000000000\n" +
+		"│ ◈ *Prefijo* : `.`\n" +
+		"╰┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈╯\n\n" +
+		"╭──〔 📌 *GUÍA RÁPIDA* 〕──⬣\n" +
+		"│ 🅞 Dueño • 🅟 Premium • 🅐 Admin\n" +
+		"│ 🅖 Grupos • 🅛 Límite\n" +
+		"╰─────────────────────────⬣\n\n" +
+		"_Selecciona una categoría en el botón desplegable de abajo para ver sus comandos._\n\n" +
+		"📢 *Canal:* " + menuChannelURL
+
+	if got != want {
+		t.Fatalf("texto del menú cambió:\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 	if n := utf8.RuneCountInString(got); n > 1024 {
 		t.Fatalf("cuerpo demasiado largo para una tarjeta: %d runas", n)
 	}
+	if menuFooter != "Shin-MD • Bot de WhatsApp Profesional\ngithub.com/riokuroxi-svg/Shin-MD" {
+		t.Fatalf("tag final inesperado: %q", menuFooter)
+	}
 }
 
-func TestMenuNubeNombreUsaUnicodeVisible(t *testing.T) {
-	if got, want := menuNubeNombre("Shin-MD"), "ＳＨＩＮ–ＭＤ"; got != want {
-		t.Fatalf("nombre decorado = %q; want %q", got, want)
+func TestMenuNombreYGreetingSonSeguros(t *testing.T) {
+	if got, want := menuUserName("  Rin\n\x00  "), "Rin"; got != want {
+		t.Fatalf("nombre saneado = %q; want %q", got, want)
 	}
-	if got, want := menuNubeNombre(""), "ＳＨＩＮ–ＭＤ"; got != want {
+	if got, want := menuUserName(""), "Usuario"; got != want {
 		t.Fatalf("nombre por defecto = %q; want %q", got, want)
+	}
+	for _, tc := range []struct {
+		hour int
+		want string
+	}{
+		{5, "¡Buenos Días! 🌅"},
+		{12, "¡Buenas Tardes! ☀️"},
+		{19, "¡Buenas Noches! 🌙"},
+	} {
+		got := menuGreeting(time.Date(2026, 11, 20, tc.hour, 0, 0, 0, time.Local))
+		if got != tc.want {
+			t.Errorf("saludo de las %d = %q; want %q", tc.hour, got, tc.want)
+		}
+	}
+}
+
+func TestMenuDatosRealesDelUsuario(t *testing.T) {
+	owner := &bot.Context{
+		IsOwner:  true,
+		Identity: wa.Identity{PN: wa.NewJID("5210000000000", wa.DefaultUserServer)},
+	}
+	if got, want := menuUserRole(owner), "👑 Creador / Owner"; got != want {
+		t.Fatalf("rango owner = %q; want %q", got, want)
+	}
+	if got, want := menuUserNumber(owner), "+5210000000000"; got != want {
+		t.Fatalf("número = %q; want %q", got, want)
+	}
+	if got := menuUserNumber(&bot.Context{Sender: wa.NewJID("12345", wa.HiddenUserServer)}); got != "No disponible" {
+		t.Fatalf("un LID desconocido no debe mostrarse como teléfono: %q", got)
+	}
+}
+
+func TestMenuUptimeCompacto(t *testing.T) {
+	cases := []struct {
+		d    time.Duration
+		want string
+	}{
+		{7 * time.Second, "7s"},
+		{3*time.Minute + 12*time.Second, "3m 12s"},
+		{25*time.Hour + 4*time.Minute + 9*time.Second, "1d 1h 4m 9s"},
+	}
+	for _, tc := range cases {
+		if got := menuUptime(tc.d); got != tc.want {
+			t.Errorf("menuUptime(%s) = %q; want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestMenuClimaTraduceCodigos(t *testing.T) {
+	for code, want := range map[int]string{
+		0:  "☀️ Despejado",
+		3:  "☁️ Nublado",
+		45: "🌫️ Niebla",
+		63: "🌧️ Lluvia moderada",
+		95: "⛈️ Tormenta eléctrica",
+	} {
+		if got := menuWeatherCondition(code); got != want {
+			t.Errorf("código %d = %q; want %q", code, got, want)
+		}
+	}
+}
+
+func TestMenuClimaFallaSinBloquearElMenu(t *testing.T) {
+	menuWeatherState.Lock()
+	menuWeatherState.city = ""
+	menuWeatherState.value = ""
+	menuWeatherState.until = time.Time{}
+	menuWeatherState.Unlock()
+	t.Cleanup(func() {
+		menuWeatherState.Lock()
+		menuWeatherState.city = ""
+		menuWeatherState.value = ""
+		menuWeatherState.until = time.Time{}
+		menuWeatherState.Unlock()
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := menuWeather(ctx, "Tula de Allende"); got != menuWeatherFallback {
+		t.Fatalf("fallback del clima = %q; want %q", got, menuWeatherFallback)
+	}
+
+	menuWeatherState.Lock()
+	defer menuWeatherState.Unlock()
+	if menuWeatherState.city != "Tula de Allende" || menuWeatherState.value != menuWeatherFallback {
+		t.Fatalf("caché del fallback = ciudad %q, valor %q", menuWeatherState.city, menuWeatherState.value)
 	}
 }
 

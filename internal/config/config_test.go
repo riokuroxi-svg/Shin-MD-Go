@@ -23,6 +23,7 @@ WARMUP_START=40
 WARMUP_END=300
 RICH_AI=1
 INTERACTIVE_STRATEGIES=texto,nativa
+MENU_WEATHER_CITY="Tula de Allende"
 esta línea no es una variable
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -42,6 +43,9 @@ esta línea no es una variable
 	}
 	if cfg.LogLevel != "debug" || !cfg.RichAI || cfg.InteractiveMode != "texto,nativa" {
 		t.Fatalf("nivel = %q rich = %v interactivos = %q", cfg.LogLevel, cfg.RichAI, cfg.InteractiveMode)
+	}
+	if cfg.WeatherCity != "Tula de Allende" {
+		t.Fatalf("ciudad del clima = %q", cfg.WeatherCity)
 	}
 	if cfg.BaseDelay.Milliseconds() != 900 || cfg.JitterSigma != 0.3 {
 		t.Fatalf("anti-ban = %s / %v", cfg.BaseDelay, cfg.JitterSigma)
@@ -66,6 +70,9 @@ func TestLoadDefaultsNoEnvFile(t *testing.T) {
 	}
 	if cfg.InteractiveMode != "baileys,nativa,texto" {
 		t.Fatalf("estrategias interactivas = %q", cfg.InteractiveMode)
+	}
+	if cfg.WeatherCity != "Mexico City" {
+		t.Fatalf("ciudad del clima por defecto = %q", cfg.WeatherCity)
 	}
 }
 
