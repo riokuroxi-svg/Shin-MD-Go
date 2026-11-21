@@ -361,8 +361,9 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
   otras acciones usan la hoja nativa «Ver todo». `.menucat` deja de crear una
   hilera de quick replies y usa `ListMessage` paginados de ocho categorías más
   navegación, siempre dentro del máximo de 10 filas. Los IDs siguen entrando
-  al mismo router y cualquier error conserva el fallback escribible. Este
-  candidato vive fuera de `main` hasta completar la prueba en Android/iOS/Web.
+  al mismo router y cualquier error conserva el fallback escribible. El
+  candidato está publicado en `main` para probarlo; el tag
+  `menu-pre-redesign-0.24.0` conserva el punto anterior por si hay que volver.
   Detalles en [`docs/MENU-0.25.0-RC1.md`](docs/MENU-0.25.0-RC1.md).
 - **0.24.0** — **botones nativos con el protobuf de Baileys y degradación
   escalonada**: el mensaje lleva `viewOnceMessage.message`, contexto de

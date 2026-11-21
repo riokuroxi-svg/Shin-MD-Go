@@ -1,7 +1,7 @@
 # 0.25.0-rc1 — «Nube de Shin»
 
-Candidato de diseño para probar en un cliente real de WhatsApp antes de tocar
-`main`.
+Candidato de diseño publicado en `main` para probarlo en un cliente real de
+WhatsApp. El estado anterior se conserva en un tag de retorno.
 
 ## Qué cambia
 
@@ -93,5 +93,5 @@ verlo en el teléfono.
 ## Punto de retorno
 
 La base anterior al rediseño es el commit
-`f10107d74ad939624cbf97910a4ba3f33edc9a76`, conservado como rama de checkpoint
-y como tag. `main` permanece en ese commit durante la prueba del candidato.
+`f10107d74ad939624cbf97910a4ba3f33edc9a76`, conservado en el tag
+`menu-pre-redesign-0.24.0`. `main` contiene el candidato 0.25.0-rc1.
