@@ -219,6 +219,7 @@ ANTIBAN_PERCHAR_MS=25
 WARMUP_START=20
 WARMUP_END=500
 RICH_AI=0        # 1 = respuestas enriquecidas estilo IA (experimental)
+INTERACTIVE_STRATEGIES=baileys,nativa,texto  # orden; si falta «texto», se añade al final
 WORKERS=4        # mensajes que se atienden a la vez (1 = uno detrás de otro)
 QUEUE=128        # cuántos mensajes pueden esperar antes de descartar
 CHARACTERS_FILE=data/characters.json   # catálogo del gacha (si falta, lo dice)
@@ -354,6 +355,18 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.24.0** — **botones nativos con el protobuf de Baileys y degradación
+  escalonada**: el mensaje lleva `viewOnceMessage.message`, contexto de
+  dispositivo v2, `nativeFlowMessage.messageVersion=1` (el `9` corresponde al
+  nodo binario, no al protobuf) y el `biz` completo con `decision_id` de 20
+  bytes + `decision_source=df`. Una fixture producida por Baileys 7.0.0-rc14 se
+  compara campo por campo y byte por byte contra Go. Todo vive en
+  `internal/interactivos`: los comandos solo ven `bot.Messenger`, y la cadena
+  configurable prueba `baileys → nativa → texto`; el menú de texto conserva
+  las órdenes si fallan los formatos ricos. Las listas van como `ListMessage`
+  directo y whatsmeow emite un único nodo `product_list`, no el `single_select`
+  que puede recibir ACK y desaparecer en cuentas normales. Detalles en
+  [`docs/INTERACTIVOS-0.24.0.md`](docs/INTERACTIVOS-0.24.0.md).
 - **0.23.1** — **el código de vinculación ya no queda debajo de la TUI**:
   en una sesión nueva, `PairPhone` imprime las ocho letras como texto estático
   y `Login` se queda ahí —sin `clear`, búfer alternativo ni repintados— hasta

@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"shin-go/internal/bot"
-	"shin-go/internal/ui"
 	"shin-go/internal/wa"
 )
 
@@ -34,20 +33,20 @@ func init() {
 		},
 	})
 
-	// .lista → desplegable clásico (ListMessage)
+	// .lista → ListMessage directo; whatsmeow etiqueta su biz como product_list
 	bot.Register(bot.Command{
 		Name:     "lista",
 		Aliases:  []string{"desplegable", "list"},
 		Category: bot.CatMain,
-		Desc:     "Prueba de lista desplegable clásica",
+		Desc:     "Prueba de lista desplegable compatible",
 		Run: func(c *bot.Context) error {
-			return c.Bot.SendList(c.Ctx, c.Chat,
-				"SHIN-MD", "Elige una opción del desplegable", "Ver opciones", "Lista clásica (ListMessage)", c.Priority(),
-				ui.ListSection{Title: "General", Rows: []ui.ListRow{
+			return c.ReplyList(
+				"SHIN-MD", "Elige una opción del desplegable", "Ver opciones", "Lista compatible (product_list)",
+				bot.ListSection{Title: "General", Rows: []bot.ListRow{
 					{ID: "ping", Title: "🏓 Ping", Desc: "latencia del bot"},
 					{ID: "menu", Title: "📋 Menú", Desc: "todos los comandos"},
 				}},
-				ui.ListSection{Title: "Economía", Rows: []ui.ListRow{
+				bot.ListSection{Title: "Economía", Rows: []bot.ListRow{
 					{ID: "daily", Title: "🎁 Daily", Desc: "recompensa diaria"},
 					{ID: "perfil", Title: "👤 Perfil", Desc: "tus monedas"},
 				}},
@@ -62,10 +61,10 @@ func init() {
 		Category: bot.CatMain,
 		Desc:     "Prueba de carrusel (tarjetas deslizables)",
 		Run: func(c *bot.Context) error {
-			return c.Bot.SendCarousel(c.Ctx, c.Chat, "Desliza las tarjetas →", c.Priority(),
-				ui.Card{Title: "Carta 1", Body: "Ping y estado", Buttons: []ui.Button{bot.QuickReply("🏓 Ping", "ping")}},
-				ui.Card{Title: "Carta 2", Body: "Tu perfil", Buttons: []ui.Button{bot.QuickReply("👤 Perfil", "perfil")}},
-				ui.Card{Title: "Carta 3", Body: "Menú completo", Buttons: []ui.Button{bot.QuickReply("📋 Menú", "menu")}},
+			return c.ReplyCarousel("Desliza las tarjetas →",
+				bot.Card{Title: "Carta 1", Body: "Ping y estado", Buttons: []bot.Button{bot.QuickReply("🏓 Ping", "ping")}},
+				bot.Card{Title: "Carta 2", Body: "Tu perfil", Buttons: []bot.Button{bot.QuickReply("👤 Perfil", "perfil")}},
+				bot.Card{Title: "Carta 3", Body: "Menú completo", Buttons: []bot.Button{bot.QuickReply("📋 Menú", "menu")}},
 			)
 		},
 	})

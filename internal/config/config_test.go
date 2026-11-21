@@ -22,6 +22,7 @@ ANTIBAN_SIGMA=0.3
 WARMUP_START=40
 WARMUP_END=300
 RICH_AI=1
+INTERACTIVE_STRATEGIES=texto,nativa
 esta línea no es una variable
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -39,8 +40,8 @@ esta línea no es una variable
 	if cfg.StateDir != "demo" || filepath.Base(cfg.DBFile) != "shin.db" {
 		t.Fatalf("rutas = %q / %q", cfg.StateDir, cfg.DBFile)
 	}
-	if cfg.LogLevel != "debug" || !cfg.RichAI {
-		t.Fatalf("nivel = %q rich = %v", cfg.LogLevel, cfg.RichAI)
+	if cfg.LogLevel != "debug" || !cfg.RichAI || cfg.InteractiveMode != "texto,nativa" {
+		t.Fatalf("nivel = %q rich = %v interactivos = %q", cfg.LogLevel, cfg.RichAI, cfg.InteractiveMode)
 	}
 	if cfg.BaseDelay.Milliseconds() != 900 || cfg.JitterSigma != 0.3 {
 		t.Fatalf("anti-ban = %s / %v", cfg.BaseDelay, cfg.JitterSigma)
@@ -62,6 +63,9 @@ func TestLoadDefaultsNoEnvFile(t *testing.T) {
 	}
 	if cfg.BaseDelay.Milliseconds() != 1200 || cfg.WarmupStart != 20 || cfg.WarmupEnd != 500 {
 		t.Fatalf("anti-ban por defecto = %s %d→%d", cfg.BaseDelay, cfg.WarmupStart, cfg.WarmupEnd)
+	}
+	if cfg.InteractiveMode != "baileys,nativa,texto" {
+		t.Fatalf("estrategias interactivas = %q", cfg.InteractiveMode)
 	}
 }
 

@@ -31,9 +31,10 @@ type Config struct {
 	Prefixes []string // BOT_PREFIX=".,/,!,+" (mismo .env)
 	Owners   []string // OWNERS="521…,522…" — números crudos, se normalizan al usarlos
 
-	LogLevel string
-	RichAI   bool   // RICH_AI=1: respuestas enriquecidas estilo IA (experimental)
-	EnvFile  string // ruta del .env que se leyó ("" si no había)
+	LogLevel        string
+	RichAI          bool   // RICH_AI=1: respuestas enriquecidas estilo IA (experimental)
+	InteractiveMode string // INTERACTIVE_STRATEGIES; defecto: baileys,nativa,texto
+	EnvFile         string // ruta del .env que se leyó ("" si no había)
 
 	// Panel web (B7): mismos nombres de variable que el bot de JS.
 	WebPort     int    // PORT (defecto 3000)
@@ -157,29 +158,30 @@ func LoadFrom(envPath string) Config {
 		DBFile:   vars.str("SHIN_DB_PATH", filepath.Join(stateDir, "shin.db")),
 		AuthFile: vars.str("SHIN_AUTH_DB", filepath.Join(stateDir, "auth.db")),
 
-		Prefixes:    prefixes,
-		Owners:      owners,
-		LogLevel:    vars.str("LOG_LEVEL", "info"),
-		RichAI:      vars.str("RICH_AI", "0") == "1",
-		EnvFile:     used,
-		WebPort:     vars.num("PORT", 3000, 1, 65535),
-		PanelPublic: vars.str("LOOPBACK", "1") == "0",
-		PanelPass:   vars.str("PANEL_PASSWORD", ""),
-		GachaFile:   vars.str("CHARACTERS_FILE", filepath.Join(stateDir, "characters.json")),
-		BotName:     vars.str("BOT_NAME", "SHIN-MD"),
-		Workers:     vars.num("WORKERS", 4, 1, 16),
-		QueueSize:   vars.num("QUEUE", 128, 1, 1024),
-		RedPrefijo:  vars.get("RED_PREFIJO"),
-		RedPorIP:    vars.num("RED_MAX_POR_IP", 50, 1, 10000),
-		RedVentana:  time.Duration(vars.num("RED_VENTANA", 60, 1, 3600)) * time.Second,
-		StickerPack: vars.str("STICKER_PACK", "Shin-MD-Go"),
-		StickerAuth: vars.str("STICKER_AUTHOR", "riokuroxi-svg"),
-		LogFile:     vars.str("LOG_FILE", filepath.Join(stateDir, "shin.log")),
-		MenuImage:   vars.str("MENU_IMAGE", "0") == "1",
-		OwnerName:   vars.str("OWNER_NAME", "el dueño"),
-		OwnerNumber: vars.str("OWNER_NUMBER", ""),
-		GeminiKey:   vars.str("GEMINI_KEY", ""),
-		GeminiModel: vars.str("GEMINI_MODEL", "gemini-1.5-flash"),
+		Prefixes:        prefixes,
+		Owners:          owners,
+		LogLevel:        vars.str("LOG_LEVEL", "info"),
+		RichAI:          vars.str("RICH_AI", "0") == "1",
+		InteractiveMode: vars.str("INTERACTIVE_STRATEGIES", "baileys,nativa,texto"),
+		EnvFile:         used,
+		WebPort:         vars.num("PORT", 3000, 1, 65535),
+		PanelPublic:     vars.str("LOOPBACK", "1") == "0",
+		PanelPass:       vars.str("PANEL_PASSWORD", ""),
+		GachaFile:       vars.str("CHARACTERS_FILE", filepath.Join(stateDir, "characters.json")),
+		BotName:         vars.str("BOT_NAME", "SHIN-MD"),
+		Workers:         vars.num("WORKERS", 4, 1, 16),
+		QueueSize:       vars.num("QUEUE", 128, 1, 1024),
+		RedPrefijo:      vars.get("RED_PREFIJO"),
+		RedPorIP:        vars.num("RED_MAX_POR_IP", 50, 1, 10000),
+		RedVentana:      time.Duration(vars.num("RED_VENTANA", 60, 1, 3600)) * time.Second,
+		StickerPack:     vars.str("STICKER_PACK", "Shin-MD-Go"),
+		StickerAuth:     vars.str("STICKER_AUTHOR", "riokuroxi-svg"),
+		LogFile:         vars.str("LOG_FILE", filepath.Join(stateDir, "shin.log")),
+		MenuImage:       vars.str("MENU_IMAGE", "0") == "1",
+		OwnerName:       vars.str("OWNER_NAME", "el dueño"),
+		OwnerNumber:     vars.str("OWNER_NUMBER", ""),
+		GeminiKey:       vars.str("GEMINI_KEY", ""),
+		GeminiModel:     vars.str("GEMINI_MODEL", "gemini-1.5-flash"),
 
 		BaseDelay:   time.Duration(vars.integer("ANTIBAN_BASE_MS", 1200)) * time.Millisecond,
 		JitterSigma: vars.float("ANTIBAN_SIGMA", 0.25),

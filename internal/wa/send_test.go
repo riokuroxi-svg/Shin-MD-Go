@@ -7,6 +7,16 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
+func TestCaptionImagenConservaElEnvioNoInteractivo(t *testing.T) {
+	got := captionImagen("Título", "Cuerpo", "Pie")
+	if got != "Título\n\nCuerpo\n\nPie" {
+		t.Fatalf("caption = %q", got)
+	}
+	if got := captionImagen("", "  foto  ", ""); got != "foto" {
+		t.Fatalf("caption simple = %q", got)
+	}
+}
+
 func TestBuildPollMessageQuizContract(t *testing.T) {
 	msg, err := buildPollMessage(PollSpec{
 		Question: "Capital de México", Options: []string{"Guadalajara", "CDMX", "Monterrey"},

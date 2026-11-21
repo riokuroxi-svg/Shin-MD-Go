@@ -32,6 +32,7 @@ import (
 
 	"shin-go/internal/config"
 	"shin-go/internal/consola"
+	"shin-go/internal/interactivos"
 	"shin-go/internal/xlog"
 )
 
@@ -47,13 +48,14 @@ import (
 const PairDisplayName = "Chrome (Linux)"
 
 type Client struct {
-	waClient  *whatsmeow.Client
-	Queue     *Queue
-	IDs       *Resolver // traduce teléfono ↔ LID (ver identity.go)
-	Log       *xlog.Logger
-	StartedAt time.Time
-	container *sqlstore.Container
-	cfg       config.Config
+	waClient     *whatsmeow.Client
+	Queue        *Queue
+	IDs          *Resolver // traduce teléfono ↔ LID (ver identity.go)
+	Log          *xlog.Logger
+	StartedAt    time.Time
+	container    *sqlstore.Container
+	cfg          config.Config
+	interactivos interactivos.Enviador // Baileys → nativa → texto, en un solo paquete
 
 	// baseCtx es el contexto del proceso: los handlers y los envíos lo heredan
 	// para que un Ctrl+C los cancele a todos. Antes cada envío usaba
@@ -114,6 +116,12 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityS
 		cfg:       cfg,
 		baseCtx:   ctx,
 	}
+	// El orden es configurable; si el .env omite texto, se añade al final.
+	// Los comandos no conocen ninguna de estas estrategias.
+	c.interactivos = interactivos.NuevaCadena(
+		transporteInteractivo{client: c}, log,
+		interactivos.Estrategias(cfg.InteractiveMode)...,
+	)
 
 	// Igual que en Shin-MD: nunca se borra una sesión registrada por un corte
 	// de red. whatsmeow reconecta; aquí solo se avisa y se deja registro.

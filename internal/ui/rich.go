@@ -26,6 +26,7 @@ import (
 	"go.mau.fi/whatsmeow/proto/waAICommonDeprecated"
 	"go.mau.fi/whatsmeow/proto/waCommon"
 	"go.mau.fi/whatsmeow/proto/waE2E"
+	"go.mau.fi/whatsmeow/types"
 )
 
 // ─── Respuestas enriquecidas (estilo IA) ─────────────────────────────────────
@@ -117,6 +118,20 @@ func BuildEvent(name, description string, start, end time.Time, extraGuests bool
 }
 
 // ─── Pin / unpin de mensaje ──────────────────────────────────────────────────
+
+// Key arma una MessageKey para pin, edición y respuestas. Vive junto a esas
+// operaciones, no en el paquete de interactivos.
+func Key(chat types.JID, fromMe bool, id types.MessageID, sender types.JID) *waCommon.MessageKey {
+	k := &waCommon.MessageKey{
+		RemoteJID: proto.String(chat.String()),
+		FromMe:    proto.Bool(fromMe),
+		ID:        proto.String(id),
+	}
+	if !sender.IsEmpty() {
+		k.Participant = proto.String(sender.String())
+	}
+	return k
+}
 
 func BuildPin(key *waCommon.MessageKey, pin bool) *waE2E.Message {
 	t := waE2E.PinInChatMessage_UNPIN_FOR_ALL

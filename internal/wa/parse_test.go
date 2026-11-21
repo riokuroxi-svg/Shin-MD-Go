@@ -64,6 +64,28 @@ func TestParseListResponse(t *testing.T) {
 	}
 }
 
+func TestParseNativeFlowResponse(t *testing.T) {
+	msg := &waE2E.Message{
+		InteractiveResponseMessage: &waE2E.InteractiveResponseMessage{
+			InteractiveResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage_{
+				NativeFlowResponseMessage: &waE2E.InteractiveResponseMessage_NativeFlowResponseMessage{
+					Name:       proto.String("single_select"),
+					ParamsJSON: proto.String(`{"id":"menu:economia","display_text":"Economía"}`),
+					Version:    proto.Int32(1),
+				},
+			},
+		},
+	}
+	p := ParseMessage(msg, prefixes)
+	if !p.IsButton || p.ButtonID != "menu:economia" {
+		t.Fatalf("native_flow mal leído: %+v", p)
+	}
+	cmd, args := CommandFromButton(p.ButtonID)
+	if cmd != "menu" || len(args) != 1 || args[0] != "economia" {
+		t.Fatalf("respuesta native_flow no enrutable: %q %v", cmd, args)
+	}
+}
+
 // El jitter debe caer siempre dentro de los límites duros.
 func TestQueueDelayWithinBounds(t *testing.T) {
 	q := NewQueue(testConfig())

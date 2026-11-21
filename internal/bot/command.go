@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
+	"shin-go/internal/interactivos"
 	"shin-go/internal/store"
-	"shin-go/internal/ui"
 	"shin-go/internal/wa"
 	"shin-go/internal/xlog"
 )
@@ -44,8 +44,11 @@ const (
 // los fallbacks; los comandos no construyen payloads externos.
 type Messenger interface {
 	SendText(context.Context, wa.JID, string, bool) error
+	SendMenu(context.Context, wa.JID, string, string, string, bool, ...Button) error
 	SendButtons(context.Context, wa.JID, string, string, string, bool, ...Button) error
 	SendButtonsImage(context.Context, wa.JID, []byte, string, string, string, bool, ...Button) error
+	SendList(context.Context, wa.JID, string, string, string, string, bool, ...ListSection) error
+	SendCarousel(context.Context, wa.JID, string, bool, ...Card) error
 }
 
 type Context struct {
@@ -138,28 +141,43 @@ func (c *Context) ReplyPriority(text string) error {
 	return c.outbox().SendText(c.Ctx, c.Chat, text, true)
 }
 
-// ReplyButtons contesta con tarjeta y botones nativos.
+// ReplyMenu, ReplyButtons, ReplyList y ReplyCarousel son el ÚNICO puerto que
+// usan los comandos para interactivos. La cadena concreta vive fuera de cmds/.
+func (c *Context) ReplyMenu(title, body, footer string, buttons ...Button) error {
+	return c.outbox().SendMenu(c.Ctx, c.Chat, title, body, footer, c.CmdPriority, buttons...)
+}
+
 func (c *Context) ReplyButtons(title, body, footer string, buttons ...Button) error {
 	return c.outbox().SendButtons(c.Ctx, c.Chat, title, body, footer, c.CmdPriority, buttons...)
 }
 
-// ReplyImage contesta con una tarjeta que lleva imagen de cabecera.
 func (c *Context) ReplyImage(image []byte, title, body, footer string, buttons ...Button) error {
 	return c.outbox().SendButtonsImage(c.Ctx, c.Chat, image, title, body, footer, c.CmdPriority, buttons...)
 }
 
-// Button es alias para no obligar a importar internal/ui en cada comando.
-type Button = ui.Button
+func (c *Context) ReplyList(title, body, buttonText, footer string, sections ...ListSection) error {
+	return c.outbox().SendList(c.Ctx, c.Chat, title, body, buttonText, footer, c.CmdPriority, sections...)
+}
+
+func (c *Context) ReplyCarousel(body string, cards ...Card) error {
+	return c.outbox().SendCarousel(c.Ctx, c.Chat, body, c.CmdPriority, cards...)
+}
+
+// Alias para no obligar a importar internal/interactivos en cada comando.
+type Button = interactivos.Button
+type ListRow = interactivos.ListRow
+type ListSection = interactivos.ListSection
+type Card = interactivos.Card
 
 // Atajos de botones para los handlers (mismo nombre que en JS: quickReply…).
 var (
-	QuickReply   = ui.QuickReply
-	CTAURL       = ui.CTAURL
-	CTACopy      = ui.CTACopy
-	CTACall      = ui.CTACall
-	OpenWebview  = ui.OpenWebview
-	SendLocation = ui.SendLocation
-	SingleSelect = ui.SingleSelect
+	QuickReply   = interactivos.QuickReply
+	CTAURL       = interactivos.CTAURL
+	CTACopy      = interactivos.CTACopy
+	CTACall      = interactivos.CTACall
+	OpenWebview  = interactivos.OpenWebview
+	SendLocation = interactivos.SendLocation
+	SingleSelect = interactivos.SingleSelect
 )
 
 // FromButton indica si la invocación vino de tocar un botón.

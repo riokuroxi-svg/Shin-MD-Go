@@ -14,6 +14,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -24,8 +25,44 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 	"go.mau.fi/whatsmeow/types"
 
+	"shin-go/internal/interactivos"
 	"shin-go/internal/ui"
 )
+
+// transporteInteractivo es el puente mínimo entre el paquete aislado y el
+// socket de whatsmeow. Solo este archivo conoce ambas cosas.
+type transporteInteractivo struct{ client *Client }
+
+func (t transporteInteractivo) Send(ctx context.Context, chat types.JID, msg *waE2E.Message, nodes []binary.Node) error {
+	var extra []whatsmeow.SendRequestExtra
+	if len(nodes) > 0 {
+		n := nodes
+		extra = append(extra, whatsmeow.SendRequestExtra{AdditionalNodes: &n})
+	}
+	_, err := t.client.waClient.SendMessage(ctx, chat, msg, extra...)
+	return err
+}
+
+func (c *Client) sendTextoDirecto(ctx context.Context, chat types.JID, text string) error {
+	_, err := c.waClient.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
+	return err
+}
+
+// fallbackPorErrorDeNodos no intenta un mensaje rico sin sus metadatos: el
+// servidor puede darle ACK y el receptor no dibujarlo, que es justo el fallo
+// que esta versión corrige.
+func (c *Client) fallbackPorErrorDeNodos(ctx context.Context, chat types.JID, fallback string, nodeErr error) error {
+	if fallback == "" {
+		return nodeErr
+	}
+	if c.Log != nil {
+		c.Log.Warn("no se pudieron construir los nodos del envío rico (" + nodeErr.Error() + "); cayendo a texto plano")
+	}
+	if err := c.sendTextoDirecto(ctx, chat, fallback); err != nil {
+		return errors.Join(nodeErr, err)
+	}
+	return nil
+}
 
 // trySend intenta el envío rico con sus nodos; si falla, manda el texto.
 func (c *Client) trySend(ctx context.Context, chat types.JID, msg *waE2E.Message, nodes []binary.Node, fallback string) error {
@@ -43,48 +80,61 @@ func (c *Client) trySend(ctx context.Context, chat types.JID, msg *waE2E.Message
 		c.Log.Warn("envío rico falló (" + err.Error() + "), cayendo a texto plano")
 	}
 
-	_, err := c.waClient.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(fallback)})
-	return err
+	return c.sendTextoDirecto(ctx, chat, fallback)
 }
 
-// ─── Tarjetas con botones ────────────────────────────────────────────────────
+// ─── Interactivos (un solo puerto, tres estrategias) ─────────────────────────
 
-// SendButtons: tarjeta con botones (el comportamiento de siempre).
-func (c *Client) SendButtons(ctx context.Context, chat JID, title, body, footer string, priority bool, buttons ...ui.Button) error {
-	msg := ui.BuildButtons(title, body, footer, buttons...)
+// SendMenu expresa la intención del comando .menu. Por defecto intenta el
+// protobuf envuelto estilo Baileys, luego el nativo directo y por último texto.
+func (c *Client) SendMenu(ctx context.Context, chat JID, title, body, footer string, priority bool, buttons ...interactivos.Button) error {
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), ui.Plain(body, footer, buttons...))
+		return c.interactivos.SendMenu(ctx, chat.whatsmeow(), title, body, footer, buttons...)
 	})
 }
 
-// SendButtonsImage: tarjeta con IMAGEN de cabecera + botones. Es la que más
-// luce en un menú: foto arriba, texto y botones. Si la subida falla, degrada
-// a la tarjeta de texto (nunca se queda sin responder).
-func (c *Client) SendButtonsImage(ctx context.Context, chat JID, image []byte, title, body, footer string, priority bool, buttons ...ui.Button) error {
+func (c *Client) SendButtons(ctx context.Context, chat JID, title, body, footer string, priority bool, buttons ...interactivos.Button) error {
+	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
+		return c.interactivos.SendButtons(ctx, chat.whatsmeow(), title, body, footer, nil, buttons...)
+	})
+}
+
+func captionImagen(title, body, footer string) string {
+	partes := make([]string, 0, 3)
+	for _, parte := range []string{title, body, footer} {
+		if parte = strings.TrimSpace(parte); parte != "" {
+			partes = append(partes, parte)
+		}
+	}
+	return strings.Join(partes, "\n\n")
+}
+
+// SendButtonsImage conserva también el uso histórico de ReplyImage como envío
+// de una imagen corriente: sin botones no construye un interactivo ni pierde el
+// archivo durante el fallback. Con botones sube la cabecera una vez y las tres
+// estrategias reutilizan el mismo ImageMessage.
+func (c *Client) SendButtonsImage(ctx context.Context, chat JID, image []byte, title, body, footer string, priority bool, buttons ...interactivos.Button) error {
+	if len(buttons) == 0 {
+		return c.SendImage(ctx, chat, image, captionImagen(title, body, footer), priority)
+	}
 	imgMsg, err := c.uploadImage(ctx, image)
 	if err != nil {
-		return c.SendButtons(ctx, chat, title, body, footer, priority, buttons...)
+		c.Log.Warn("no se pudo subir la cabecera del interactivo (" + err.Error() + "); se envía sin imagen")
 	}
-	msg := ui.BuildButtonsImage(imgMsg, title, body, footer, buttons...)
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), ui.Plain(body, footer, buttons...))
+		return c.interactivos.SendButtons(ctx, chat.whatsmeow(), title, body, footer, imgMsg, buttons...)
 	})
 }
 
-// SendCarousel: carrusel de tarjetas deslizables (con el envoltorio carousel).
-func (c *Client) SendCarousel(ctx context.Context, chat JID, body string, priority bool, cards ...ui.Card) error {
-	msg := ui.BuildCarousel(cards...)
+func (c *Client) SendCarousel(ctx context.Context, chat JID, body string, priority bool, cards ...interactivos.Card) error {
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodesCarousel(chat.whatsmeow(), true), ui.PlainCarousel(body, cards...))
+		return c.interactivos.SendCarousel(ctx, chat.whatsmeow(), body, "", cards...)
 	})
 }
 
-// SendList: desplegable clásico. No lleva nodos <biz>: el propio servidor le
-// añade sus atributos (v=2, type=single_select).
-func (c *Client) SendList(ctx context.Context, chat JID, title, body, buttonText, footer string, priority bool, sections ...ui.ListSection) error {
-	msg := ui.BuildList(title, body, buttonText, footer, sections...)
+func (c *Client) SendList(ctx context.Context, chat JID, title, body, buttonText, footer string, priority bool, sections ...interactivos.ListSection) error {
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
-		return c.trySend(ctx, chat.whatsmeow(), msg, nil, ui.PlainList(title, body, buttonText, footer, sections...))
+		return c.interactivos.SendList(ctx, chat.whatsmeow(), title, body, buttonText, footer, sections...)
 	})
 }
 
@@ -184,7 +234,11 @@ func (c *Client) SendRich(ctx context.Context, chat JID, msg *waE2E.Message, fal
 		return c.SendText(ctx, chat, fallback, priority)
 	}
 	return c.Queue.Do(ctx, len([]rune(fallback)), priority, func() error {
-		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), fallback)
+		nodes, err := interactivos.BizNodes(chat.whatsmeow(), true)
+		if err != nil {
+			return c.fallbackPorErrorDeNodos(ctx, chat.whatsmeow(), fallback, err)
+		}
+		return c.trySend(ctx, chat.whatsmeow(), msg, nodes, fallback)
 	})
 }
 
@@ -196,7 +250,11 @@ func (c *Client) SendRichCard(ctx context.Context, chat JID, card RichCard, fall
 	}
 	msg := ui.RichTextCard(card.Text, card.Language, card.Code)
 	return c.Queue.Do(ctx, len([]rune(fallback)), priority, func() error {
-		return c.trySend(ctx, chat.whatsmeow(), msg, ui.BizNodes(chat.whatsmeow(), true), fallback)
+		nodes, err := interactivos.BizNodes(chat.whatsmeow(), true)
+		if err != nil {
+			return c.fallbackPorErrorDeNodos(ctx, chat.whatsmeow(), fallback, err)
+		}
+		return c.trySend(ctx, chat.whatsmeow(), msg, nodes, fallback)
 	})
 }
 

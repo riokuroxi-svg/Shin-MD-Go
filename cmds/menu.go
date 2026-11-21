@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"shin-go/internal/bot"
-	"shin-go/internal/ui"
 )
 
 func init() {
@@ -58,7 +57,7 @@ func init() {
 				unique, aliases, bot.HookCount(),
 				strings.Join(c.Bot.Prefixes(), " "))
 
-			return c.ReplyButtons(
+			return c.ReplyMenu(
 				c.Bot.Config().BotName,
 				body,
 				"Toca un botón o escribe .menu <categoría>",
@@ -97,14 +96,14 @@ func init() {
 			sb.WriteString("╰─ .menu <categoría> para ver los comandos")
 
 			// Un botón por categoría: WhatsApp acepta hasta 10 en native_flow.
-			var btns []ui.Button
+			var btns []bot.Button
 			for i, name := range names {
 				if i >= 8 {
 					break
 				}
 				btns = append(btns, bot.QuickReply("📁 "+name, "menu:"+name))
 			}
-			return c.ReplyButtons("SHIN-MD", sb.String(), "Elige una categoría", btns...)
+			return c.ReplyMenu("SHIN-MD", sb.String(), "Elige una categoría", btns...)
 		},
 	})
 }

@@ -24,7 +24,7 @@ obliga a mantener 35.000 líneas de parches**. Mira tu propio repo:
 **Botones: el mito hay que desmontarlo.** En Go *no hay* una función
 `SendButtons()`. Los botones de WhatsApp **no son un flag de la librería**, son:
 
-1. un protobuf `InteractiveMessage` → `nativeFlowMessage` con `messageVersion: 9`
+1. un protobuf `InteractiveMessage` → `nativeFlowMessage` con `messageVersion: 1`
    y botones `quick_reply` / `cta_url` / `cta_copy`;
 2. **más** unos nodos binarios que envuelven el mensaje:
    `<biz><interactive type=native_flow v=1><native_flow v=9 name=mixed>`,
@@ -32,9 +32,9 @@ obliga a mantener 35.000 líneas de parches**. Mira tu propio repo:
 
 Eso ya lo tienes resuelto y **documentado en tu propio `wa-nodes.js`**: si faltan
 los nodos, el servidor acepta el mensaje y el teléfono lo tira sin pintar nada,
-sin error. En Go es exactamente igual **pero está tipado y puede ir en un solo
-archivo** — que es lo que hace este esqueleto en `internal/ui/buttons.go`
-(`BuildButtons` + `BizNodes`), enviado con
+sin error. En Go es exactamente igual **pero está tipado y aislado en un solo
+paquete** — `internal/interactivos`, con protobuf, nodos y fallback separados—,
+enviado con
 `whatsmeow.SendRequestExtra{AdditionalNodes: &nodes}` (campo que existe en la
 librería oficial: *"use this only if you know what you are doing"*).
 
@@ -43,7 +43,7 @@ Traducción honesta:
 - **La estabilidad de los botones no viene de Go.** Viene de (a) usar la versión
   correcta del `nativeFlowMessage`, (b) mandar los nodos `<biz>` y (c) tener
   fallback a texto. Da igual el idioma: mal armado, no se pinta; bien armado, se
-  pinta. Lo que Go te da es que ese conocimiento quede **en un solo archivo
+  pinta. Lo que Go te da es que ese conocimiento quede **en un solo paquete
   compilado**, en vez de copiado en tres sitios y con un `@ts-expect-error`
   pendiente de validar en teléfono (literalmente lo que dice tu `wa-nodes.js`).
 - **La estabilidad del bot sí mejora de verdad** al quitar la capa de forks y
@@ -100,8 +100,8 @@ Traducción honesta:
 | `src/core/health.js` (403, backoff, loop 515) | `internal/wa/client.go` + política de eventos | whatsmeow maneja el backoff; tu política se reduce a "no borrar sesión por red" |
 | `src/commands/router.js` | `internal/bot/router.go` | prefijos → cooldown 10/min → permisos → handler, con `recover()` |
 | `src/commands/loader.js` (import dinámico) | `internal/bot/command.go` (`Register`) | los comandos se registran solos desde `cmds/*.go` |
-| `src/commands/interactive.js` + `lib/wa-nodes.js` | `internal/ui/buttons.go` | **un solo sitio** para proto + nodos + fallback |
-| `lib/native-params.js`, `native-actions.js` | `internal/ui/buttons.go` + `parse.go` | parámetros JSON tipados como `Button{Name, Params}` |
+| `src/commands/interactive.js` + `lib/wa-nodes.js` | `internal/interactivos/` | **un solo paquete** para proto + nodos + fallback |
+| `lib/native-params.js`, `native-actions.js` | `internal/interactivos/modelo.go` + `parse.go` | parámetros JSON tipados como `Button{Name, Params}` |
 | `src/serialize.js` | `internal/wa/parse.go` | texto / botón / lista → comando |
 | `src/storage/database.js` + `migrations.js` | `internal/store/{db,store}.go` | SQLite puro Go (`modernc.org/sqlite`), sin cgo |
 | `src/services/logger.js` (chalk + rotación) | `internal/xlog` + `log/slog` + rotación propia | mismos iconos ◐ ◑ ✓ ✕ |
@@ -132,9 +132,10 @@ return c.ReplyButtons(
 - El id del botón se convierte en comando con la misma convención que ya usas:
   `menu:economia` → comando `menu` con args `["economia"]` (`CommandFromButton`).
 - Si el envío falla → se manda el mismo contenido en **texto plano con los
-  botones listados** (`ui.Plain`). Nunca silencio.
-- Probado en `internal/ui/buttons_test.go`: `messageVersion=9`, params JSON
-  correctos y estructura del nodo `biz` (`biz > interactive > native_flow + quality_control`
+  botones listados** (`interactivos.Texto`). Nunca silencio.
+- Probado en `internal/interactivos/interactivos_test.go`: protobuf
+  `messageVersion=1` (el nodo binario conserva `v=9`), params JSON correctos y
+  estructura del nodo `biz` (`biz > interactive > native_flow + quality_control`
   y `bot` **solo** en chats privados).
 
 > ⚠️ Nota de campo: los botones nativos en cuentas *no-Business* funcionan
@@ -290,8 +291,8 @@ Regla de oro igual que la tuya: **nada entra sin prueba que lo respalde**.
 
 | Riesgo | Mitigación |
 |---|---|
-| whatsmeow no tiene helper de botones | ya resuelto: `internal/ui` (proto tipado + nodos) + tests |
-| Cambios de proto en WhatsApp | el empaquetado está en un archivo; el test de `messageVersion` avisa |
+| whatsmeow no tiene helper de botones | ya resuelto: `internal/interactivos` (proto tipado + nodos + estrategias) + tests |
+| Cambios de proto en WhatsApp | el empaquetado está aislado; una fixture real de Baileys se compara campo por campo y byte por byte |
 | `modernc.org/sqlite` (puro Go) es algo más lento que el nativo | para un bot de WhatsApp sobra; si molesta: `mattn/go-sqlite3` (necesita cgo, complica Termux) |
 | Un solo maintainer en whatsmeow (tulir) | es el estándar de facto desde 2022 (Beeper/Matrix), versionado por fecha; a diferencia de un fork de Baileys, es una dependencia **declarada y pública** |
 | Perder features de npm | opción híbrida (§5B) |
@@ -303,11 +304,11 @@ Regla de oro igual que la tuya: **nada entra sin prueba que lo respalde**.
 
 1. `go run ./cmd/shin --code <tu número de pruebas>` (número secundario, **nunca
    el principal** — la misma regla de tu README).
-2. Manda `.menu`: debe llegar la tarjeta con 4 botones.
+2. Manda `.menu`: debe llegar la tarjeta con sus cinco acciones.
 3. Toca "📋 Categorías": el router debe recibir `menucat` y responder.
 4. Prueba en un grupo: los botones deben seguir saliendo (sin el nodo `bot`).
-5. Apaga la conexión a mitad de un envío: el mensaje debe caer a texto plano,
-   no desaparecer.
+5. Arranca una vez con `INTERACTIVE_STRATEGIES=texto`: `.menu` debe conservar
+   órdenes escribibles y enlaces. Vuelve después al orden predeterminado.
 
 ---
 
