@@ -70,7 +70,7 @@ Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 | Comando | Qué hace |
 |---|---|
-| `.menu` / `.menucat` | menú con botones nativos y categorías |
+| `.menu` / `.menucat` | «Nube de Shin»: portada con botones nativos y categorías en listas paginadas |
 | `.ping` | latencia real de recepción, uptime, estado de conexión y de la cola (con botones) |
 | `.work` · `.daily` · `.weekly` · `.monthly` | ganas dinero: 2 000–4 000 por turno y rachas de hasta 1 015 000 |
 | `.botones` | banco de pruebas: quick_reply, cta_url, cta_copy, cta_call |
@@ -355,6 +355,15 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.25.0-rc1** — **«Nube de Shin», candidato para probar en teléfono**: la
+  portada de `.menu` adopta el diseño con nube, ala y estrella, nombre Unicode,
+  saludo y resumen legible. Las dos rutas principales quedan a la vista y las
+  otras acciones usan la hoja nativa «Ver todo». `.menucat` deja de crear una
+  hilera de quick replies y usa `ListMessage` paginados de ocho categorías más
+  navegación, siempre dentro del máximo de 10 filas. Los IDs siguen entrando
+  al mismo router y cualquier error conserva el fallback escribible. Este
+  candidato vive fuera de `main` hasta completar la prueba en Android/iOS/Web.
+  Detalles en [`docs/MENU-0.25.0-RC1.md`](docs/MENU-0.25.0-RC1.md).
 - **0.24.0** — **botones nativos con el protobuf de Baileys y degradación
   escalonada**: el mensaje lleva `viewOnceMessage.message`, contexto de
   dispositivo v2, `nativeFlowMessage.messageVersion=1` (el `9` corresponde al

@@ -477,7 +477,7 @@ var variantesDeMenu = []struct {
 	nombre string
 	desc   string
 }{
-	{"v1", 1, "TARJETA CON BOTONES", "menú con botones nativos y categorías"},
+	{"v1", 1, "NUBE DE SHIN", "portada decorada, botones nativos y listas paginadas"},
 	{"v2", 2, "TEXTO CON LISTA", "todo en un mensaje de texto, sin botones"},
 	{"v4", 4, "FICHA COMPACTA", "resumen corto con las categorías y el estado"},
 }

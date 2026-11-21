@@ -7,6 +7,7 @@ package interactivos
 import (
 	"crypto/rand"
 	"fmt"
+	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
 
@@ -25,23 +26,58 @@ func init() {
 	waE2E.ListMessage_ListType_name[int32(waE2E.ListMessage_SINGLE_SELECT)] = "PRODUCT_LIST"
 }
 
+func stringsRunes(s string) int { return utf8.RuneCountInString(s) }
+
 func construirListaClasica(p Peticion) (*waE2E.Message, error) {
 	if p.Clase != ClaseLista {
 		return nil, fmt.Errorf("la estrategia de lista no aplica a clase %d", p.Clase)
 	}
-	if len(p.Sections) == 0 {
-		return nil, fmt.Errorf("lista sin secciones")
+	if stringsRunes(p.Body) == 0 {
+		return nil, fmt.Errorf("lista sin descripción")
+	}
+	if stringsRunes(p.Title) > 60 {
+		return nil, fmt.Errorf("título de lista supera 60 caracteres")
+	}
+	if stringsRunes(p.Body) > 1024 {
+		return nil, fmt.Errorf("descripción de lista supera 1024 caracteres")
+	}
+	if stringsRunes(p.ButtonText) == 0 || stringsRunes(p.ButtonText) > 20 {
+		return nil, fmt.Errorf("botón de lista debe tener entre 1 y 20 caracteres")
+	}
+	if stringsRunes(p.Footer) > 60 {
+		return nil, fmt.Errorf("pie de lista supera 60 caracteres")
+	}
+	if len(p.Sections) == 0 || len(p.Sections) > 10 {
+		return nil, fmt.Errorf("lista debe tener entre 1 y 10 secciones")
 	}
 
+	totalRows := 0
 	sections := make([]*waE2E.ListMessage_Section, 0, len(p.Sections))
 	for _, section := range p.Sections {
 		if len(section.Rows) == 0 {
 			return nil, fmt.Errorf("sección %q sin filas", section.Title)
 		}
+		if stringsRunes(section.Title) > 24 {
+			return nil, fmt.Errorf("título de sección supera 24 caracteres")
+		}
+		totalRows += len(section.Rows)
+		if totalRows > 10 {
+			return nil, fmt.Errorf("lista supera el máximo de 10 filas")
+		}
+
 		rows := make([]*waE2E.ListMessage_Row, 0, len(section.Rows))
 		for _, row := range section.Rows {
 			if row.ID == "" || row.Title == "" {
 				return nil, fmt.Errorf("fila de lista sin id o título")
+			}
+			if stringsRunes(row.ID) > 200 {
+				return nil, fmt.Errorf("id de fila supera 200 caracteres")
+			}
+			if stringsRunes(row.Title) > 24 {
+				return nil, fmt.Errorf("título de fila supera 24 caracteres")
+			}
+			if stringsRunes(row.Desc) > 72 {
+				return nil, fmt.Errorf("descripción de fila supera 72 caracteres")
 			}
 			rows = append(rows, &waE2E.ListMessage_Row{
 				RowID:       proto.String(row.ID),

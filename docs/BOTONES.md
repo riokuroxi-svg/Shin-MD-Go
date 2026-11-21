@@ -69,6 +69,9 @@ La lista es la excepción: viaja como `ListMessage` de primer nivel, con payload
 `SINGLE_SELECT` y secreto de 32 bytes. No recibe `AdditionalNodes`; whatsmeow
 crea su único `<biz><list v="2" type="product_list"/></biz>`. La etiqueta
 `product_list` es necesaria aunque el payload siga siendo de selección simple.
+El constructor valida antes de enviar los límites del cliente: título 60,
+botón 20, sección/fila 24, descripción de fila 72, hasta 10 secciones y **10
+filas en total**. Una lista inválida no llega al socket: cae al texto accionable.
 
 ## Estrategias y fallback
 
@@ -94,8 +97,8 @@ INTERACTIVE_STRATEGIES=texto
 
 | Comando | Contenido |
 |---|---|
-| `.menu` | menú principal; usa el puerto `SendMenu` |
-| `.menucat` | botones de categorías + hoja inferior |
+| `.menu` | portada «Nube de Shin»; dos accesos visibles y hoja inferior «Ver todo» |
+| `.menucat` | `ListMessage` paginado: máximo 10 filas y selección por categoría |
 | `.botones` | quick reply, URL, copiar y llamada |
 | `.lista` | `ListMessage` directo + nodo `product_list`, dos secciones |
 | `.carrusel` | tres tarjetas horizontales |

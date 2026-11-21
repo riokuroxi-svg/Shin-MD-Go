@@ -366,6 +366,28 @@ func TestListaClasicaDirectaConNodoProductList(t *testing.T) {
 	}
 }
 
+func TestListaFueraDeLimitesCaeATextoAntesDeEnviar(t *testing.T) {
+	rows := make([]ListRow, 11)
+	for i := range rows {
+		rows[i] = ListRow{ID: "opcion-" + string(rune('a'+i)), Title: "Opción " + string(rune('A'+i))}
+	}
+
+	transporte := &transporteFalso{}
+	cadena := NuevaCadena(transporte, nil, ListaClasica(), Texto())
+	err := cadena.SendList(context.Background(), jidGrupo(t), "SHIN", "elige", "Ver", "pie",
+		ListSection{Title: "General", Rows: rows},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transporte.envios) != 1 {
+		t.Fatalf("envíos=%d; la lista inválida no debía llegar al socket", len(transporte.envios))
+	}
+	if got := transporte.envios[0].msg.GetConversation(); !strings.Contains(got, "Opción A") || !strings.Contains(got, ".opcion-a") {
+		t.Fatalf("fallback no es accionable:\n%s", got)
+	}
+}
+
 func TestCarruselUsaNativeFlow(t *testing.T) {
 	carrusel, nombre, err := construirBaileys(Peticion{Clase: ClaseCarrusel, Body: "desliza", Cards: []Card{
 		{Title: "Uno", Body: "1", Buttons: []Button{QuickReply("Ver", "uno")}},

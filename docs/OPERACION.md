@@ -142,7 +142,7 @@ bucle y ficha compacta. Aquí se ofrecen las que este bot **sabe pintar**:
 
 | Variante | Qué es |
 |---|---|
-| `v1` (por defecto) | Tarjeta con botones nativos y categorías |
+| `v1` (por defecto) | «Nube de Shin»: portada, botones nativos y categorías en listas paginadas |
 | `v2` | Todo en un mensaje de texto, sin botones (funciona en cualquier cliente) |
 | `v4` | Ficha compacta: cabecera, cola del día, uptime y categorías con su número |
 
