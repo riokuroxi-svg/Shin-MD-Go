@@ -57,10 +57,10 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B5.1 · Utilidades (1/2)** | `.qr` `.morse` `.demorse` `.recordar` `.olvidar` `.say` `.encuesta` `.pfp` `.wastalk` `.readviewonce` `.get`, encuestas y quiz nativos, recordatorios que sobreviven al reinicio | ✅ **hecho** ([docs/UTILIDADES.md](docs/UTILIDADES.md)) |
 | **B7.0 · Operación y estado** | `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart` `.update` `.subir` `.cache` `.shell` `.setmenu` | ✅ **hecho** ([docs/OPERACION.md](docs/OPERACION.md)) |
 | **B5.2 · Utilidades (2/2)** | `.traducir` (2 proveedores + detector propio) `.tts` `.acortar` `.tourl` `.crypto` `.letra` `.gitclone` `.githubstalk` `.ai` (con `GEMINI_KEY`) y `.hd` + `.carbon` **locales** (sin subir nada a webs ajenas); `.benchdl` queda para B6 | ✅ **hecho** ([docs/UTILIDADES2.md](docs/UTILIDADES2.md)) |
-| **B6.0 · Música (escucha y descarga)** | `.play` (catálogos libres: Audius/Deezer/iTunes en paralelo, lista numerada, semáforo por chat) · `.escucha` (preview oficial) — *decisión: solo donde se permite descargar, no se piratea YouTube* | ✅ **hecho** ([docs/MUSICA.md](docs/MUSICA.md)) |
+| **B6.0 · Música (escucha y descarga)** | `.play` usa Audius/Deezer/iTunes y puede añadir un ejecutable **spotDL opcional** para enlaces Spotify o `spotdl:consulta`; lista numerada y semáforo por chat · `.escucha` conserva previews oficiales | ✅ **hecho** ([docs/MUSICA.md](docs/MUSICA.md)) |
 | **B6.1 · Descargas sociales** | `.yt` `.ytmp3` `.tiktok` `.ig` `.fb` `.x` vía **yt-dlp cuando está instalado** (decisión auditada: YouTube 2026 exige PoToken; no se finge, se explica) — tope 100 MB, plazo 5 min | ✅ **hecho** |
 | **B7 · Panel web** | `/health` `/queue` `/memoria` `/metrics` con failsafe loopback + Basic auth con candado, **rotación de logs** (4 MB × 3), unidad `systemd` | ✅ **hecho** ([docs/PANEL.md](docs/PANEL.md)) |
-| **B8 · Paridad de catálogo y tests** | los 640 nombres del JS están en Go o justificados en [NO_PORTADO](docs/NO_PORTADO.md); `TestParidadCatalogo` lo blinda · 416 tests en 16 paquetes | ✅ **hecho** |
+| **B8 · Paridad de catálogo y tests** | los 640 nombres del JS están en Go o justificados en [NO_PORTADO](docs/NO_PORTADO.md); `TestParidadCatalogo` lo blinda · 510 tests en 19 paquetes | ✅ **hecho** |
 
 Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
@@ -206,6 +206,11 @@ archivo, así que `OWNERS=521… ./shin` sigue funcionando.
 BOT_NAME=SHIN-MD      # nombre que aparece en el menú y en .info
 MENU_IMAGE=0          # 1 = .menu sale como imagen dibujada
 MENU_WEATHER_CITY="Mexico City"  # ciudad del clima de la ficha textual
+SPOTDL_PATH=           # vacío = apagado; p. ej. spotdl o /opt/spotdl
+SPOTDL_FFMPEG=ffmpeg   # ejecutable ffmpeg usado por spotDL
+SPOTDL_COOKIE_FILE=    # cookies opcionales para el proveedor de audio
+SPOTDL_AUDIO=piped,soundcloud,bandcamp,youtube-music,youtube
+SPOTDL_TIMEOUT=300     # 30-900 s por descarga externa
 OWNER_NAME=Roxi       # cómo te llama .owner
 OWNER_NUMBER=52155…   # número para los botones de llamar/WhatsApp
 BOT_PREFIX=".,/,!,+"
@@ -242,13 +247,31 @@ RED_VENTANA=60        # segundos de la ventana
 ### Música (`.song`, `.play`) y banco de pruebas
 
 `internal/musica` busca en **Audius** (audio completo, catálogo libre),
-**Deezer** e **iTunes** (ficha + preview oficial de 30 s). Lo comercial nunca se
-descarga: `Pista.Libre` lo impide y hay una prueba que lo fija.
+**Deezer** e **iTunes** (ficha + preview oficial de 30 s). `Pista.Libre` sigue
+separando esas fuentes. Si el operador define `SPOTDL_PATH`, `.play` también
+puede resolver un enlace Spotify o `spotdl:artista canción` mediante el
+**ejecutable spotDL**, marcado como backend externo (`🟣`) y nunca como libre.
+No se instala Node ni se baja un binario silenciosamente.
 
 ```sh
 go run ./cmd/shin-musica buscar "lofi"
 go run ./cmd/shin-musica bajar  "chill instrumental" -o /tmp/cancion.mp3
+
+# VPS: instala spotDL + ffmpeg por tu gestor preferido y después:
+SPOTDL_PATH=spotdl SPOTDL_FFMPEG=ffmpeg ./shin
+
+# Termux ARM64 (el binario x86-64 de spotdl-api no sirve aquí):
+pkg install python ffmpeg
+python -m pip install spotdl
 ```
+
+Usa `.play <enlace de Spotify>` o `.play spotdl:<consulta>`. El adaptador no
+abre una shell, limita cada pista a 20 minutos/24 MB, fuerza MP3 a 128 kbps,
+mata el grupo de procesos al vencer el plazo y conserva Audius/iTunes cuando
+spotDL está apagado o falla. `SPOTDL_AUDIO` ordena los proveedores y
+`SPOTDL_COOKIE_FILE` permite aportar cookies cuando alguno exige autenticación;
+la disponibilidad depende de la red y el servicio externo. Usa este backend
+únicamente para contenido que tengas derecho a descargar.
 
 ### Red propia (opcional)
 
@@ -337,7 +360,7 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 392 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # 510 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
                  # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
                  # advertencias y actividad de grupo, juegos de azar (probabilidad
@@ -356,6 +379,14 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.26.0-rc1** — **spotDL opcional para `.play`, sin Node**: un adaptador Go
+  invoca un ejecutable configurado por `SPOTDL_PATH`, resuelve enlaces Spotify
+  o `spotdl:consulta` y entrega una sola pista MP3. Valida ffmpeg, duración,
+  formato y 24 MB; usa argumentos directos en vez de shell, aplica timeout y
+  mata el grupo de procesos. Admite cookies y un orden acotado de proveedores;
+  una prueba real descargó un MP3 de 1.98 MiB con spotDL 4.6.0. Termux ARM64
+  instala spotDL con Python, no con el binario Linux x86-64 de `spotdl-api`.
+  Audius/iTunes siguen funcionando cuando el backend externo está ausente.
 - **0.25.0-rc2** — **la ficha textual del bot de JavaScript, sin imágenes**:
   la portada principal muestra saludo, nombre del usuario, versión real,
   motor whatsmeow, uptime, clima, comandos únicos, rango, teléfono y prefijo.

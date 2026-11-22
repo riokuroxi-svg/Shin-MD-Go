@@ -9,6 +9,7 @@ package cmds
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,9 +154,40 @@ func TestMotivosDeFallo(t *testing.T) {
 	if !strings.Contains(motivoErrorMusica(musica.ErrNoLibre), "*.escucha*") {
 		t.Fatal("NoLibre debe llevar la cruzada a .escucha")
 	}
+	providerErr := errors.New("AudioProviderError: YT-DLP download error")
+	if got := motivoErrorMusica(providerErr); !strings.Contains(got, "SPOTDL_COOKIE_FILE") {
+		t.Fatalf("error de proveedor spotDL sin guía: %q", got)
+	}
 }
 
 // La lista guardada: «.play 2» elige la segunda.
+func TestConsultaSpotDLSeFuerzaSinRomperTextoNormal(t *testing.T) {
+	cases := []struct {
+		in    string
+		query string
+		force bool
+	}{
+		{"spotdl:The Weeknd - Blinding Lights", "The Weeknd - Blinding Lights", true},
+		{"https://open.spotify.com/track/abc", "https://open.spotify.com/track/abc", true},
+		{"spotify:track:abc", "spotify:track:abc", true},
+		{"lofi chill", "lofi chill", false},
+	}
+	for _, tc := range cases {
+		query, force := consultaParaSpotDL(tc.in)
+		if query != tc.query || force != tc.force {
+			t.Errorf("consultaParaSpotDL(%q) = %q, %v; want %q, %v", tc.in, query, force, tc.query, tc.force)
+		}
+	}
+
+	p := musica.Pista{Fuente: musica.FuenteSpotDL, Backend: musica.BackendSpotDL, Entrada: "https://open.spotify.com/track/abc"}
+	if descargables, _ := cuentas([]musica.Pista{p}); descargables != 1 {
+		t.Fatalf("spotDL no se contó como descargable: %d", descargables)
+	}
+	if line := lineaPista(p); !strings.Contains(line, "🟣 spotDL") {
+		t.Fatalf("etiqueta spotDL ausente: %q", line)
+	}
+}
+
 func TestListaGuardadaYNumerada(t *testing.T) {
 	chat := wa.NewJID("chat-lista-x", wa.GroupServer)
 	defer func() { muMusica.Lock(); delete(listasMus, chat); muMusica.Unlock() }()

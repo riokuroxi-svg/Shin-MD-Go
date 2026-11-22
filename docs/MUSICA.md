@@ -1,85 +1,145 @@
-# Música — bloque B6.0
+# Música — `.play`, previews y spotDL opcional
 
-_14-nov-2026 · versión 0.14.0_
+_20-nov-2026 · versión 0.26.0-rc1_
 
-El reproductor de música, portado del play.js de Shin-MD con una regla
-distinta en su corazón: **solo catálogos que permiten bajar audio**.
+`.play` conserva su motor integrado y suma un backend externo opcional. El bot
+Go no depende de Node y no descarga ejecutables durante el arranque.
 
-## El cambio de regla
+## Fuentes integradas
 
-El `.play` del JS sacaba audio de YouTube con un patio trasero (ytdl-core en
-`lib/play-fuentes.js`, un pipeline de lemas en `lib/ytdlp2.js` y, cuando
-todo eso fallaba, yt-dlp por consola). Ese patio funcionaba cuando YouTube
-no lo estaba cerrando, que era cada dos semanas, y rompía sus condiciones de
-servicio.
-
-Aquí la opción es al revés: en vez de fingir que el usuario puede bajar lo
-que no debe, el comando **busca donde sí se puede**.
-
-| Fuente | Qué da | Cuándo baja |
+| Fuente | Qué entrega | Marca |
 |---|---|---|
-| **Audius** (`api.audius.co`) | audio completo, descarga libre | siempre |
-| **Deezer / iTunes** | ficha + **preview oficial** de 30 s | nunca el tema completo |
-| Internet Archive | audio de dominio público/BF | (`musica.FuenteArchivo`, próximos bloques) |
+| **Audius** | audio completo del catálogo libre | 🟢 descarga libre |
+| **Deezer / iTunes** | ficha y preview oficial de 30 s | 🟡 preview |
+| **spotDL** (opcional) | pista resuelta por el proveedor configurado en spotDL | 🟣 spotDL |
 
-La línea **`Pista.Libre`** no es configurable a propósito: si el tema no
-tiene licencia de descarga, la respuesta lo dice y se ofrece el preview —
-**no se piratea**. Como escribimos en el motor: una función que miente es
-peor que una que falta.
+`Pista.Libre` solo se usa para las fuentes realmente libres. Una pista resuelta
+por spotDL lleva `BackendSpotDL`; nunca se etiqueta como libre. spotDL obtiene
+metadatos de Spotify y busca el audio en los proveedores configurados. El
+operador debe habilitarlo únicamente para contenido que tenga derecho a
+descargar.
 
-## Comandos
+## Por qué no se importó `spotdl-api`
 
+El paquete npm `spotdl-api` inspiró la interfaz, pero su versión 1.0.0 incluye y
+descarga el ejecutable Linux de spotDL sin distinguir arquitectura. Ese archivo
+es x86-64 y no puede ejecutarse en Termux ARM64. También añadiría Node a un bot
+que hoy se distribuye como un único binario Go.
+
+La integración usa directamente el CLI estable de spotDL:
+
+```text
+Shin-MD-Go → exec.CommandContext → spotDL → ffmpeg
 ```
-.play <nombre>   Busca en las tres fuentes en paralelo y ordena:
-                 libre delante, después por duración. Lista numerada:
-                 ▸ .play villagers santa
-                 ▸ .play 2      ← baja la 2.ª de la última lista
-                 · Si la única candidata libre es una, la baja directo.
 
-.escucha <nombre>   Preview oficial de 30 s (Deezer/iTunes). Dice de dónde
-                    sale; no finge que el tema completo está ahí.
+No hay shell, `eval`, `npm install` ni descarga automática. Cada argumento se
+pasa por separado y el operador elige qué ejecutables confiar.
+
+## Configuración
+
+El backend está apagado de forma predeterminada:
+
+```env
+SPOTDL_PATH=
+SPOTDL_FFMPEG=ffmpeg
+SPOTDL_COOKIE_FILE=
+SPOTDL_AUDIO=piped,soundcloud,bandcamp,youtube-music,youtube
+SPOTDL_TIMEOUT=300
 ```
 
-### Cambios de UX contra el JS
+Al definir `SPOTDL_PATH`, el arranque resuelve ambos ejecutables y consulta
+`spotdl --version`. `SPOTDL_AUDIO` admite únicamente `youtube-music`, `youtube`,
+`soundcloud`, `bandcamp` y `piped`, separados por comas. Si se omite o queda
+vacío, la configuración prioriza `piped,soundcloud,bandcamp` antes de YouTube.
+`SPOTDL_COOKIE_FILE` pasa un archivo de cookies existente sin copiarlo ni
+imprimir su contenido. Un fallo solo desactiva spotDL; Audius, Deezer e iTunes
+siguen disponibles.
 
-- **Sin botones nativos** de WhatsApp: whatsmeow no manda quick-replies
-  todavía, así que la lista es numerada y `.play n` la resuelve.
-- **Sin caché en RAM ni en disco**: era el punto más frágil del play.js
-  (llaves con defer dentro de defer, disco atascado) y aquí bajar una
-  canción libre tarda segundos, no los minutos de yt-dlp.
-- **Semáforo por chat conservado**: máx. **2 bajadas a la vez por chat**,
-  para que la escucha no tumbe al bot (el play.js hacía justo esto).
+### VPS Linux
 
-## Qué el motor `internal/musica` ya garantiza
+Instala ffmpeg y spotDL con el gestor que prefieras —por ejemplo `pipx`— y
+configura las rutas:
 
-Aunque la fuente mienta, el motor se protege:
+```sh
+pipx install spotdl
+sudo apt install ffmpeg
 
-1. **Tope duro de 24 MB** por descarga (`MaxAudio`): no llena el disco de
-   un teléfono con un enlace demasiado grande.
-2. **Solo audio**: si el Content-Type no es audio/* o octet-stream, se
-   cancela antes de escribir un byte (así que un servidor que devuelve HTML
-   de error no te cuela basura).
-3. **`Client.Timeout` corto (15 s)**: una fuente caída no retiene al handler.
-4. **Garantía de origen**: cada `Pista` lleva `Origen` (su página), para
-   que la ficha que manda `.escucha` diga de dónde salió la ficha, no magia.
+SPOTDL_PATH=spotdl
+SPOTDL_FFMPEG=ffmpeg
+```
 
-## Mensajes de error honestos
+También puede usarse el ejecutable oficial de spotDL en Linux x86-64. No se
+recomienda que el bot descargue automáticamente “latest”: una actualización no
+debe cambiar el binario de producción sin revisión.
 
-Cuando falla, el usuario no ve un «ytdlp ha muerto» cifrado sino el motivo
-:`«esa pista no tiene descarga libre, solo ficha y preview de 30 s»`,
-`«supera 24 MB»`, `«la fuente devolvió algo que no era audio»`.
+### Termux ARM64
+
+No uses el ejecutable Linux que instala `spotdl-api`; es x86-64. Instala la
+versión Python para la arquitectura del teléfono:
+
+```sh
+pkg install python ffmpeg
+python -m pip install spotdl
+
+SPOTDL_PATH=spotdl
+SPOTDL_FFMPEG=ffmpeg
+```
+
+## Uso
+
+```text
+.play <nombre>             Audius + Deezer + iTunes, como antes
+.play <URL de Spotify>     fuerza spotDL
+.play spotify:track:...    fuerza spotDL
+.play spotdl:<consulta>    fuerza spotDL con búsqueda de texto
+.play N                    descarga el resultado N de la última lista
+.escucha <nombre>          preview oficial de Deezer/iTunes
+```
+
+Una búsqueda de texto normal no abre un proceso externo si las fuentes rápidas
+respondieron. Si no devolvieron nada y spotDL está habilitado, se usa como
+fallback. El prefijo `spotdl:` permite pedirlo explícitamente.
+
+## Límites del adaptador
+
+- **una pista individual por descarga**: una playlist se separa en filas y cada
+  resultado usa su URL canónica de pista;
+- máximo **20 minutos** y **24 MB**;
+- salida fija **MP3 a 128 kbps** para no rebasar WhatsApp;
+- metadatos limitados a 4 MB y consultas a 500 caracteres;
+- máximo 60 s para resolver metadatos y 30–900 s configurables para descargar;
+- archivo temporal privado, eliminado al terminar;
+- validación de archivo regular y cabecera MP3 antes de copiar un byte al envío;
+- máximo dos descargas simultáneas por chat, igual que el motor anterior;
+- al cancelar o vencer el contexto en Linux se mata el grupo completo de
+  spotDL, ffmpeg y procesos auxiliares.
+
+spotDL puede terminar con código cero aunque una pista individual falle. Por
+eso el adaptador no confía solo en el código de salida: exige que exista
+`audio.mp3`, que sea regular, que respete el tamaño y que tenga cabecera MP3.
 
 ## Pruebas
 
-6 casos nuevos contra `httptest` (ninguna petición real): las tres fuentes
-se fingen en un único servidor local, se afirma que:
+Las pruebas automatizadas usan un ejecutable fingido y verifican:
 
-- `Buscar` junta las fuentes y deja el **libre primero**;
-- `Descargar` baja el MP3 libre y **rechaza HTML disfrazado de audio**;
-- el semáforo corta la tercera bajada del chat;
-- la lista numerada y «.play 2» eligen la pista correcta;
-- los motivos de fallo son los esperados (sin pistas vs. fuentes caídas).
+- JSON con logs antes del arreglo;
+- URL canónica por pista y límite de resultados;
+- consulta con metacaracteres entregada como un único argumento, sin shell, y
+  rechazo de texto que intente convertirse en bandera del CLI;
+- descarga temporal, URL canónica, cabecera MP3 y topes de duración/tamaño;
+- cancelación por contexto y proceso ausente;
+- cookies, lista cerrada de proveedores y configuración desde `.env` con plazo
+  acotado;
+- etiquetas `🟢`, `🟡` y `🟣`, lista numerada y semáforo por chat.
 
-`internal/musica` es un paquete aparte y se prueba solo con la herramienta
-de laboratorio `go run ./cmd/shin-musica buscar "lofi"` contra las APIs
-reales, sin arrancar WhatsApp.
+La comprobación manual del motor integrado descargó una pista libre de Audius
+de 7.48 MB, MP3/ID3 a 320 kbps. El adaptador real resolvió con spotDL 4.5.2 y
+4.6.0 una URL de Spotify a título, artista y duración. En este entorno, YouTube
+devolvió `AudioProviderError`; el adaptador lo detectó aunque spotDL había
+terminado su progreso y no envió un archivo inexistente. Una prueba posterior
+de extremo a extremo con spotDL 4.6.0 y el orden predeterminado resolvió y bajó
+“Monkeys Spinning Monkeys”, pista Creative Commons: MP3 válido de 2,078,466
+bytes (1.98 MiB). Estos resultados no garantizan disponibilidad en cada red o
+proveedor; por eso se documentan cookies y selección de proveedores. El
+recorrido exitoso también se cubre de forma determinista con un proceso fingido
+que genera un MP3 válido.

@@ -21,12 +21,12 @@ import (
 // en el registro, el test falla (sin trampas: no se edita este archivo a la
 // ligera, el motivo se lee en el propio diff).
 var noPortados = map[string]string{
-	// Música "antes de B6.0" que ya no finge: solo catálogo libre.
-	"play2":          "cubierto por .play (Audius/Deezer/iTunes, sin scrapear yt)",
-	"playsoundcloud": "cubierto por .play; SoundCloud no tiene descarga libre genérica",
-	"spotify":        "el catálogo Spotify sin OAuth no devuelve audio; ficha en .escucha",
+	// Música: motor integrado más adaptador spotDL externo y explícito.
+	"play2":          "cubierto por .play (Audius/Deezer/iTunes + spotDL opcional)",
+	"playsoundcloud": "cubierto por .play; SoundCloud no se presenta como catálogo libre",
+	"spotify":        "cubierto por .play <URL Spotify> cuando SPOTDL_PATH está habilitado",
 	"soundcloud":     "mismo motivo que playsoundcloud",
-	"benchdl":        "media los proveedores del JS que aquí no existen; medir nada es mentir",
+	"benchdl":        "medía proveedores internos del JS; el adaptador Go se prueba por separado",
 
 	// Los descargadores sociales van por .yt/alias — ya vía yt-dlp si existe.
 

@@ -261,9 +261,11 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   tourl, hd, carbon, crypto, letra, toimg, gitclone, githubstalk, ptv, benchdl
   y `.ai`. Se hace **después** de comprobar que cada API sigue viva.
 - **B6 · Descargas**
-  **B6.0 · música (✓ 0.15.0)**: `.play` busca en Audius + Deezer + iTunes y
-  baja el audio completo **solo donde se permite** (nada de yt-dlp); el
-  motor `internal/musica` aplica 24 MB, solo-audio y 15 s de timeout.
+  **B6.0 · música (✓ 0.15.0; spotDL opcional en 0.26.0-rc1)**: `.play` busca
+  en Audius + Deezer + iTunes y mantiene separadas las pistas libres de los
+  previews. Si el operador configura `SPOTDL_PATH`, un adaptador Go sin shell
+  resuelve enlaces Spotify o `spotdl:consulta`; valida ffmpeg, MP3, 20 min,
+  24 MB y timeout, y queda marcado como backend externo, no como «libre».
   **B6.1 · vídeos sociales (✓ 0.16.0)**: `.yt`, `.ytmp3`, `.tiktok`, `.ig`,
   `fb`, `.x` — wrapper fino sobre **yt-dlp** (no Go puro ni microservicio):
   100 MB de tope, 5 min de plazo, errores traducidos («sign in to confirm» →
@@ -279,7 +281,7 @@ npm (menús, admin, economía, gacha, perfil, utilidades — la mayoría), y dec
   justificado en `docs/NO_PORTADO.md`. Cualquier intento de olvidarse de un
   comando truena CI.
   Nota del recuento: el JS no tenía 161 tests sino 126 archivos; en Go hay
-  ya 416 tests por función. Motor y comandos sin red se prueban con
+  ya 510 tests por función. Motor y comandos sin red se prueban con
   httptest; lo que sí usa WhatsApp no emula la red de verdad (los tests de
   la cola, el anti-ban y las listas lo cubren).
 

@@ -30,10 +30,10 @@ no comandos.
 
 | JS | Sustituto Go | Motivo |
 |---|---|---|
-| play.js (ytdl/yt-dlp) | `.play` (Audius/Deezer/iTunes con licencia) | PoToken 2026; además el JS fue siempre riesgo |
-| play2, playsoundcloud, soundcloud | `.play` | sin descarga libre genérica en esas fuentes |
-| spotify | `.escucha` (preview) | sin OAuth el audio completo no llega |
-| benchdl | — | media los proveedores del JS; sin proveyedores no hay qué medir |
+| play.js (ytdl/yt-dlp) | `.play` (Audius/Deezer/iTunes + spotDL opcional) | el motor base sigue sin scraper; spotDL es un ejecutable externo explícito y limitado |
+| play2, playsoundcloud, soundcloud | `.play` | búsqueda unificada; SoundCloud no se presenta como catálogo libre |
+| spotify | `.play <URL Spotify>` / `.play spotdl:…` | spotDL opcional resuelve metadatos y proveedor de audio; Spotify no entrega el archivo |
+| benchdl | — | media proveedores internos del JS; el adaptador Go se prueba por separado |
 
 ## Del dueño / del sistema del JS
 

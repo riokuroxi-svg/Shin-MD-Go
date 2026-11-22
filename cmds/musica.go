@@ -2,16 +2,15 @@
 //
 // musica.go — bloque B6.0: la busca y la baja de audio.
 //
-// El .play del JS sacaba audio de YouTube con un patio trasero de ytdl-core,
-// pipelines rotos y yt-dlp: rápido cuando funcionaba, roto cada dos semanas
-// y encima contra las condiciones de YouTube. Aquí el trato es otro, ya
-// tomado en internal/musica: **solo catálogos que sí permiten bajar**.
+// El motor base de .play busca Audius + Deezer + iTunes y distingue audio
+// libre de ficha comercial. El operador puede habilitar además el ejecutable
+// spotDL: se invoca directamente, sin shell ni dependencia de Node, y sus
+// resultados quedan marcados como externos en vez de fingir que son libres.
 //
-//	.play <nombre>  busca en Audius + Deezer + iTunes en paralelo y baja el
-//	                audio completo cuando la pista es libre; si solo hay
-//	                ficha comercial, avisa en vez de piratearla.
-//	.escucha         el preview oficial de 30 s que publican Deezer/iTunes;
-//	                se manda de dónde sale para que no parezca magia.
+//	.play <nombre>           busca en los catálogos rápidos.
+//	.play <enlace Spotify>   resuelve y descarga con spotDL si está habilitado.
+//	.play spotdl:<consulta>  fuerza ese backend externo.
+//	.escucha                 muestra el preview oficial de Deezer/iTunes.
 //
 // Cambios de UX contra el JS y por qué:
 //
@@ -27,6 +26,7 @@
 package cmds
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -47,6 +47,33 @@ const maxDescargasParalelas = 2
 // httptest (todo lo demás —semáforo, lista, respuestas— es igual).
 var gMusica = musica.Nuevo(musica.Opciones{Timeout: 15 * time.Second})
 var clienteMusica = func() *musica.Cliente { return gMusica }
+
+// ConfigurarSpotDL habilita el ejecutable externo antes de arrancar el router.
+// Si falta o no funciona, devuelve el motivo y conserva el motor tradicional.
+func ConfigurarSpotDL(ctx context.Context, path, ffmpeg, cookieFile, audio string, timeout time.Duration) (string, error) {
+	// Restablecer primero evita conservar por accidente un ejecutable o unas
+	// cookies anteriores si una reconfiguración nueva falla.
+	gMusica = musica.Nuevo(musica.Opciones{Timeout: 15 * time.Second})
+	if strings.TrimSpace(path) == "" {
+		return "", nil
+	}
+	nuevo := musica.Nuevo(musica.Opciones{Timeout: 15 * time.Second})
+	if err := nuevo.UsarSpotDL(musica.OpcionesSpotDL{
+		Path:       path,
+		FFmpeg:     ffmpeg,
+		CookieFile: cookieFile,
+		Audio:      audio,
+		Timeout:    timeout,
+	}); err != nil {
+		return "", err
+	}
+	version, err := nuevo.VersionSpotDL(ctx)
+	if err != nil {
+		return "", err
+	}
+	gMusica = nuevo
+	return version, nil
+}
 
 // Semáforo y «lista guardada»: un map por chat con un mutex corto. Se usa un
 // mutex y no canales porque dos goroutines del mismo chat compiten entre sí
@@ -69,7 +96,7 @@ type listaPlay struct {
 func init() {
 	bot.Register(bot.Command{
 		Name: "play", Aliases: []string{"playa"}, Category: bot.CatDownload,
-		Desc: "Busca una canción en catálogos con permiso de descarga y la manda completa. «.play n» baja la n-ésima de la lista.",
+		Desc: "Busca música y la envía; admite enlaces Spotify o «spotdl:consulta» cuando el servidor habilita spotDL.",
 		Run:  cmdPlay,
 	})
 	bot.Register(bot.Command{
@@ -89,17 +116,39 @@ func cmdPlay(c *bot.Context) error {
 		return playPorNumero(c, n)
 	}
 	if caja == "" {
-		return c.Reply("¿Qué busco? Ejemplo: *.play villanos del sana*. Si ya hay una lista en pantalla, *.play 2* baja la 2.")
+		return c.Reply("¿Qué busco? Ejemplo: *.play villanos del sana*. También acepta un enlace de Spotify o *.play spotdl:artista canción* si el servidor lo habilitó.")
 	}
 
-	b := clienteMusica().Buscar(c.Ctx, caja, 5)
+	consulta, forzarSpotDL := consultaParaSpotDL(caja)
+	if consulta == "" {
+		return c.Reply("Después de *spotdl:* escribe una canción o pega un enlace de Spotify.")
+	}
+	cli := clienteMusica()
+	var b musica.Busqueda
+	if forzarSpotDL {
+		if !cli.TieneSpotDL() {
+			return c.Reply("Este servidor no tiene spotDL habilitado. Configura *SPOTDL_PATH* y *SPOTDL_FFMPEG*, o busca por nombre para usar Audius/iTunes.")
+		}
+		b = buscarSoloSpotDL(c.Ctx, cli, consulta, 5)
+	} else {
+		b = cli.Buscar(c.Ctx, consulta, 5)
+		// Solo se paga el proceso externo cuando los catálogos rápidos no
+		// encontraron nada. Para forzarlo existe «spotdl:consulta».
+		if len(b.Pistas) == 0 && cli.TieneSpotDL() {
+			spot := buscarSoloSpotDL(c.Ctx, cli, consulta, 5)
+			b.Pistas = append(b.Pistas, spot.Pistas...)
+			for fuente, fallo := range spot.Fallos {
+				b.Fallos[fuente] = fallo
+			}
+		}
+	}
 	guardarLista(c.Chat, b)
 
-	libres, _ := cuentas(b.Pistas)
+	descargables, _ := cuentas(b.Pistas)
 	switch {
 	case len(b.Pistas) == 0:
 		return c.Reply(respuestaSinPistas(b))
-	case libres == 1 && len(b.Pistas) == 1:
+	case descargables == 1 && len(b.Pistas) == 1:
 		// Único resultado con audio completo: se baja de una, sin menú, como
 		// el JS cuando yt daba una única URL.
 		if err := descargarYEnviar(c, b.Pistas[0]); err != nil {
@@ -109,17 +158,42 @@ func cmdPlay(c *bot.Context) error {
 	default:
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "🎧 *%d resultados* para «%s» — %d con audio completo\n\n",
-			len(b.Pistas), caja, libres)
+			len(b.Pistas), bot.Esc(consulta), descargables)
 		for i, p := range b.Pistas[:min(5, len(b.Pistas))] {
 			fmt.Fprintf(&sb, "*%d.* %s\n", i+1, lineaPista(p))
 		}
-		if libres > 0 {
-			sb.WriteString("\nResponde *.play N* para bajar una (solo las marcadas 🟢).")
+		if descargables > 0 {
+			sb.WriteString("\nResponde *.play N* para bajar una (🟢 libre o 🟣 spotDL).")
 		} else {
-			sb.WriteString("\nNinguna tiene licencia de descarga directa; *.escucha " + caja + "* escucha el fragmento oficial.")
+			sb.WriteString("\nNinguna tiene licencia de descarga directa; *.escucha " + bot.Esc(consulta) + "* escucha el fragmento oficial.")
 		}
 		return c.Reply(sb.String())
 	}
+}
+
+func consultaParaSpotDL(raw string) (string, bool) {
+	query := strings.TrimSpace(raw)
+	lower := strings.ToLower(query)
+	if strings.HasPrefix(lower, "spotdl:") {
+		return strings.TrimSpace(query[len("spotdl:"):]), true
+	}
+	if strings.HasPrefix(lower, "spotify:track:") ||
+		strings.HasPrefix(lower, "https://open.spotify.com/") ||
+		strings.HasPrefix(lower, "https://spotify.link/") {
+		return query, true
+	}
+	return query, false
+}
+
+func buscarSoloSpotDL(ctx context.Context, cli *musica.Cliente, query string, limit int) musica.Busqueda {
+	b := musica.Busqueda{Consulta: query, Fallos: map[string]string{}}
+	pistas, err := cli.BuscarSpotDL(ctx, query, limit)
+	if err != nil {
+		b.Fallos[musica.FuenteSpotDL] = err.Error()
+		return b
+	}
+	b.Pistas = pistas
+	return b
 }
 
 // playPorNumero cumple «.play 3»: baja la 3 de la última lista del chat.
@@ -138,8 +212,9 @@ func playPorNumero(c *bot.Context, n int) error {
 		return c.Reply(fmt.Sprintf("Esa lista solo tiene %d; elige 1-%d.", tope, tope))
 	}
 	p := ult.pistas[n-1]
-	if !p.Libre {
-		return c.Reply(fmt.Sprintf("Esa (%s) no tiene descarga libre, solo ficha; *.escucha %s* oye 30 s.", p.Titulo, ult.consulta))
+	if !p.Descargable() {
+		return c.Reply(fmt.Sprintf("Esa (%s) solo tiene ficha; *.escucha %s* oye el preview oficial.",
+			bot.Esc(p.Titulo), bot.Esc(ult.consulta)))
 	}
 	if err := descargarYEnviar(c, p); err != nil {
 		return c.Reply(motivoErrorMusica(err))
@@ -170,7 +245,8 @@ func descargarYEnviar(c *bot.Context, p musica.Pista) error {
 	if _, err := clienteMusica().Descargar(c.Ctx, p, &yardaMusica{&audio}); err != nil {
 		return err
 	}
-	return c.Bot.SendAudioPista(c.Ctx, c.Chat, audio, p.Titulo+" — "+p.Artista, p.Duracion, p.Origen, c.Priority())
+	titulo := bot.ClipText(p.Titulo+" — "+p.Artista, 120)
+	return c.Bot.SendAudioPista(c.Ctx, c.Chat, audio, titulo, p.Duracion, p.Origen, c.Priority())
 }
 
 // ── .escucha ─────────────────────────────────────────────────────────────────
@@ -212,10 +288,10 @@ func guardarLista(jid wa.JID, b musica.Busqueda) {
 	}
 }
 
-func cuentas(pistas []musica.Pista) (libres, conPreview int) {
+func cuentas(pistas []musica.Pista) (descargables, conPreview int) {
 	for _, p := range pistas {
-		if p.Libre {
-			libres++
+		if p.Descargable() {
+			descargables++
 		} else if p.Preview != "" {
 			conPreview++
 		}
@@ -228,6 +304,8 @@ func lineaPista(p musica.Pista) string {
 	switch {
 	case p.Libre:
 		marca = "🟢 descarga libre"
+	case p.Backend == musica.BackendSpotDL:
+		marca = "🟣 spotDL"
 	case p.Preview != "":
 		marca = "🟡 preview 30 s"
 	}
@@ -235,7 +313,8 @@ func lineaPista(p musica.Pista) string {
 	if p.Duracion > 0 {
 		dur = " · " + p.Minutos()
 	}
-	return fmt.Sprintf("%s — %s (%s · _%s_%s)", p.Titulo, p.Artista, marca, p.Fuente, dur)
+	return fmt.Sprintf("%s — %s (%s · _%s_%s)",
+		bot.Esc(p.Titulo), bot.Esc(p.Artista), marca, bot.Esc(p.Fuente), dur)
 }
 
 func respuestaSinPistas(b musica.Busqueda) string {
@@ -245,7 +324,7 @@ func respuestaSinPistas(b musica.Busqueda) string {
 	var sb strings.Builder
 	sb.WriteString("Hoy las fuentes no responden bien: ")
 	for f, why := range b.Fallos {
-		fmt.Fprintf(&sb, "_%s_ (%s) ", f, why)
+		fmt.Fprintf(&sb, "_%s_ (%s) ", bot.Esc(f), bot.Esc(cerca(why, 160)))
 	}
 	sb.WriteString("Reintenta en un minuto.")
 	return sb.String()
@@ -257,13 +336,20 @@ func motivoErrorMusica(err error) string {
 	s := err.Error()
 	switch {
 	case errors.Is(err, musica.ErrNoLibre):
-		return "Esa pista no tiene descarga libre, solo ficha y preview de 30 s. Prueba *.escucha*."
+		return "Esa pista no tiene audio completo en esta fuente; prueba *.escucha* para el preview oficial."
+	case errors.Is(err, musica.ErrSpotDLNoConfigurado):
+		return "spotDL no está habilitado en este servidor; usa una pista 🟢 o configura SPOTDL_PATH."
+	case strings.Contains(strings.ToLower(s), "audioprovidererror") ||
+		strings.Contains(strings.ToLower(s), "yt-dlp download error"):
+		return "spotDL encontró la canción, pero su proveedor de audio rechazó la descarga. Prueba SPOTDL_COOKIE_FILE u otro SPOTDL_AUDIO."
+	case strings.Contains(strings.ToLower(s), "ffmpeg"):
+		return "spotDL necesita ffmpeg y no pudo usarlo; revisa SPOTDL_FFMPEG."
 	case strings.Contains(s, "24 MB") || strings.Contains(s, "el audio pesa"):
 		return "El archivo supera el tope de seguridad de 24 MB; usaría otra fuente o un enlace más corto."
-	case strings.Contains(s, "se esperaba audio"):
-		return "La fuente devolvió algo que no era audio; cancelo antes de mandar basura."
+	case strings.Contains(s, "se esperaba audio") || strings.Contains(s, "no parece MP3"):
+		return "La fuente devolvió algo que no era MP3; cancelo antes de mandar basura."
 	default:
-		return "No pude bajar el audio esta vez (" + cerca(s, 120) + ")."
+		return "No pude bajar el audio esta vez (" + bot.Esc(cerca(s, 120)) + ")."
 	}
 }
 

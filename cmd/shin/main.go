@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.25.0-rc2"
+var version = "0.26.0-rc1"
 
 // numeroDeCodigo es el número pasado en --code, tal cual (se normaliza al
 // usarlo). Vive aquí y no en una variable local de main porque la
@@ -119,6 +119,16 @@ func main() {
 	// ctx se cancela con Ctrl+C → cierre limpio (adeós PM2 y sus reinicios sucios).
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if cfg.SpotDLPath != "" {
+		spotVersion, err := cmds.ConfigurarSpotDL(ctx,
+			cfg.SpotDLPath, cfg.SpotDLFFmpeg, cfg.SpotDLCookieFile, cfg.SpotDLAudio, cfg.SpotDLTimeout)
+		if err != nil {
+			log.Warn("spotDL deshabilitado: " + err.Error())
+		} else {
+			log.Info("Música: spotDL " + spotVersion + " habilitado")
+		}
+	}
 
 	db, err := store.Open(cfg.DBFile)
 	if err != nil {

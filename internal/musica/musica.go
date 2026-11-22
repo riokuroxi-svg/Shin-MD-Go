@@ -1,17 +1,17 @@
 // Shin-MD-Go — Copyright (C) 2026 riokuroxi-svg · AGPL-3.0-only
 //
-// musica.go — búsqueda y descarga desde catálogos que sí permiten descargar.
+// musica.go — búsqueda y descarga de audio con proveedores diferenciados.
 //
-// Tres fuentes, tres niveles de permiso:
+// El motor integrado mantiene tres niveles de permiso:
 //
 //	Audius            catálogo libre y descentralizado: audio completo
 //	Internet Archive  dominio público y colecciones abiertas: audio completo
 //	Deezer / iTunes   catálogo comercial: solo el fragmento de 30 s que ellos
 //	                  publican para previsualización
 //
-// Lo que este paquete NO hace: extraer audio de plataformas comerciales. El
-// catálogo libre da archivo; el comercial da ficha y preview. La línea está en
-// `Pista.Libre` y no es configurable a propósito.
+// Opcionalmente, el operador puede configurar un ejecutable spotDL externo.
+// Ese camino queda marcado con BackendSpotDL, separado de `Pista.Libre`: el bot
+// no presenta como «libre» algo que spotDL resolvió mediante otro proveedor.
 package musica
 
 import (
@@ -67,9 +67,18 @@ type Pista struct {
 	Duracion int    `json:"duracion,omitempty"` // segundos
 	Caratula string `json:"caratula,omitempty"`
 	Preview  string `json:"preview,omitempty"` // fragmento oficial de 30 s
-	Stream   string `json:"stream,omitempty"`  // audio completo (solo si Libre)
+	Stream   string `json:"stream,omitempty"`  // audio completo de una fuente libre
 	Libre    bool   `json:"libre"`
 	Origen   string `json:"origen,omitempty"` // página para atribución
+
+	// Backend y Entrada seleccionan un proveedor externo configurado por el
+	// operador. Entrada no se serializa y el adaptador valida su URL canónica.
+	Backend string `json:"backend,omitempty"`
+	Entrada string `json:"-"`
+}
+
+func (p Pista) Descargable() bool {
+	return p.Libre || (p.Backend == BackendSpotDL && p.Entrada != "")
 }
 
 // Minutos redondea la duración para mostrarla.
@@ -87,6 +96,7 @@ type Cliente struct {
 	HTTP      *http.Client
 	Audius    string // base de la API
 	UserAgent string
+	spotdl    *spotDL
 }
 
 // Opciones de creación. Los ceros toman valores sanos.
@@ -390,9 +400,15 @@ func (c *Cliente) Buscar(ctx context.Context, consulta string, porFuente int) Bu
 // tiene preview. Es una negativa, no un fallo técnico.
 var ErrNoLibre = errors.New("musica: esa pista no tiene audio libre; solo hay preview de 30 s")
 
-// Descargar copia el audio de una pista libre a w y devuelve los bytes escritos.
-// Respeta MaxAudio y no escribe nada si el contenido no parece audio.
+// Descargar copia el audio a w desde la fuente libre o desde el backend spotDL
+// habilitado por el operador. Ambos caminos respetan MaxAudio y validan formato.
 func (c *Cliente) Descargar(ctx context.Context, p Pista, w io.Writer) (int64, error) {
+	if p.Backend == BackendSpotDL {
+		if !c.TieneSpotDL() {
+			return 0, ErrSpotDLNoConfigurado
+		}
+		return c.spotdl.descargar(ctx, p, w)
+	}
 	if !p.Libre || p.Stream == "" {
 		return 0, ErrNoLibre
 	}

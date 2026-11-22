@@ -17,7 +17,7 @@ func TestMenuPrincipalConservaElTextoDelBotJS(t *testing.T) {
 	got := menuNubeBody(menuNubeData{
 		Greeting: "¡Buenas Noches! 🌙",
 		BotName:  "SHIN-MD",
-		Version:  "0.25.0-rc2",
+		Version:  "0.26.0-rc1",
 		Engine:   "whatsmeow Multi-Device",
 		Uptime:   "1h 2m 3s",
 		Weather:  "⛅ Parcialmente nublado | 🌡️ 18°C",
@@ -32,7 +32,7 @@ func TestMenuPrincipalConservaElTextoDelBotJS(t *testing.T) {
 		"      *Rin*\n\n" +
 		"╭┈┈⫹⫺ *INFORMACIÓN SHIN-MD* ⫹⫺┈┈╮\n" +
 		"│ ◈ *Nombre* : *SHIN-MD*\n" +
-		"│ ◈ *Versión* : *0.25.0-rc2*\n" +
+		"│ ◈ *Versión* : *0.26.0-rc1*\n" +
 		"│ ◈ *Motor* : `whatsmeow Multi-Device`\n" +
 		"│ ◈ *Uptime* : *1h 2m 3s*\n" +
 		"│ ◈ *Clima* : ⛅ Parcialmente nublado | 🌡️ 18°C\n" +

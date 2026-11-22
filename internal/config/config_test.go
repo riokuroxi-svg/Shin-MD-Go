@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Un .env con comentarios, comillas y export tiene que leerse igual que en el
@@ -24,6 +25,11 @@ WARMUP_END=300
 RICH_AI=1
 INTERACTIVE_STRATEGIES=texto,nativa
 MENU_WEATHER_CITY="Tula de Allende"
+SPOTDL_PATH=/opt/spotdl
+SPOTDL_FFMPEG=/opt/ffmpeg
+SPOTDL_COOKIE_FILE=/srv/cookies.txt
+SPOTDL_AUDIO="youtube-music,soundcloud"
+SPOTDL_TIMEOUT=75
 esta línea no es una variable
 `
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
@@ -46,6 +52,12 @@ esta línea no es una variable
 	}
 	if cfg.WeatherCity != "Tula de Allende" {
 		t.Fatalf("ciudad del clima = %q", cfg.WeatherCity)
+	}
+	if cfg.SpotDLPath != "/opt/spotdl" || cfg.SpotDLFFmpeg != "/opt/ffmpeg" ||
+		cfg.SpotDLCookieFile != "/srv/cookies.txt" || cfg.SpotDLAudio != "youtube-music,soundcloud" ||
+		cfg.SpotDLTimeout != 75*time.Second {
+		t.Fatalf("spotDL = %q / %q / %q / %q / %s",
+			cfg.SpotDLPath, cfg.SpotDLFFmpeg, cfg.SpotDLCookieFile, cfg.SpotDLAudio, cfg.SpotDLTimeout)
 	}
 	if cfg.BaseDelay.Milliseconds() != 900 || cfg.JitterSigma != 0.3 {
 		t.Fatalf("anti-ban = %s / %v", cfg.BaseDelay, cfg.JitterSigma)
@@ -74,13 +86,18 @@ func TestLoadDefaultsNoEnvFile(t *testing.T) {
 	if cfg.WeatherCity != "Mexico City" {
 		t.Fatalf("ciudad del clima por defecto = %q", cfg.WeatherCity)
 	}
+	if cfg.SpotDLPath != "" || cfg.SpotDLFFmpeg != "ffmpeg" || cfg.SpotDLCookieFile != "" ||
+		cfg.SpotDLAudio != "piped,soundcloud,bandcamp,youtube-music,youtube" || cfg.SpotDLTimeout != 5*time.Minute {
+		t.Fatalf("defaults spotDL = %q / %q / %q / %q / %s",
+			cfg.SpotDLPath, cfg.SpotDLFFmpeg, cfg.SpotDLCookieFile, cfg.SpotDLAudio, cfg.SpotDLTimeout)
+	}
 }
 
 // Valores imposibles en el .env no deben romper el motor anti-ban.
 func TestLoadClampsAbsurdValues(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, ".env")
-	content := "ANTIBAN_BASE_MS=10\nANTIBAN_SIGMA=-2\nWARMUP_START=0\nWARMUP_END=5\nBOT_PREFIX=,,\n"
+	content := "ANTIBAN_BASE_MS=10\nANTIBAN_SIGMA=-2\nWARMUP_START=0\nWARMUP_END=5\nBOT_PREFIX=,,\nSPOTDL_TIMEOUT=1\n"
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +114,9 @@ func TestLoadClampsAbsurdValues(t *testing.T) {
 	}
 	if len(cfg.Prefixes) != 1 || cfg.Prefixes[0] != "." {
 		t.Fatalf("prefijos = %v", cfg.Prefixes)
+	}
+	if cfg.SpotDLTimeout != 30*time.Second {
+		t.Fatalf("timeout spotDL = %s", cfg.SpotDLTimeout)
 	}
 }
 
