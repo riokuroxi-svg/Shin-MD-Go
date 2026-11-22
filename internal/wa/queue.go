@@ -25,6 +25,7 @@ package wa
 
 import (
 	"context"
+	"errors"
 	"math"
 	"math/rand"
 	"sync"
@@ -32,6 +33,16 @@ import (
 
 	"shin-go/internal/config"
 )
+
+const dedupWindow = 12 * time.Second
+
+var ErrDuplicateSuppressed = errors.New("envío duplicado suprimido")
+
+type dedupEntry struct {
+	at       time.Time
+	token    uint64
+	inFlight bool
+}
 
 // Queue es la cola de envío. Es segura para usar desde varias goroutines.
 type Queue struct {
@@ -49,19 +60,25 @@ type Queue struct {
 	sentToday int
 	anchor    time.Time // primer día del calentamiento (persistido en SQLite)
 	slowed    bool      // hoy ya se avisó de que el número va en modo lento
+
+	dedup                map[string]dedupEntry
+	dedupSeq             uint64
+	dedupOps             uint64
+	duplicatesSuppressed uint64
 }
 
 // Snapshot es una foto del estado de la cola, para /health y para las pruebas.
 type Snapshot struct {
-	Day       string
-	SentToday int
-	Budget    int
-	Anchor    time.Time
-	Slowed    bool
+	Day                  string
+	SentToday            int
+	Budget               int
+	Anchor               time.Time
+	Slowed               bool
+	DuplicatesSuppressed uint64
 }
 
 func NewQueue(cfg config.Config) *Queue {
-	return &Queue{cfg: cfg, anchor: time.Now().UTC()}
+	return &Queue{cfg: cfg, anchor: time.Now().UTC(), dedup: make(map[string]dedupEntry)}
 }
 
 // SetAnchor fija el primer día del calentamiento. main() lo rellena con la
@@ -85,13 +102,33 @@ func (q *Queue) Anchor() time.Time {
 // Do espera el turno y ejecuta `send`. Es el ÚNICO camino por el que debe
 // salir un mensaje: así el espaciado y el cupo diario se aplican siempre.
 func (q *Queue) Do(ctx context.Context, textLen int, priority bool, send func() error) error {
+	return q.do(ctx, textLen, priority, "", send)
+}
+
+// DoDedup aplica además supresión exacta durante una ventana corta. La llave es
+// una huella del contenido visible + chat + tipo, nunca metadata falsificada.
+func (q *Queue) DoDedup(ctx context.Context, textLen int, priority bool, key string, send func() error) error {
+	return q.do(ctx, textLen, priority, key, send)
+}
+
+func (q *Queue) do(ctx context.Context, textLen int, priority bool, key string, send func() error) (err error) {
+	var token uint64
+	if key != "" {
+		var reserved bool
+		token, reserved = q.reserveDedup(key, time.Now())
+		if !reserved {
+			return ErrDuplicateSuppressed
+		}
+		defer func() { q.finishDedup(key, token, err == nil) }()
+	}
+
 	q.gate.Lock()
 	defer q.gate.Unlock()
 
-	if err := q.waitTurn(ctx, textLen, priority); err != nil {
+	if err = q.waitTurn(ctx, textLen, priority); err != nil {
 		return err
 	}
-	if err := send(); err != nil {
+	if err = send(); err != nil {
 		return err
 	}
 
@@ -100,6 +137,46 @@ func (q *Queue) Do(ctx context.Context, textLen int, priority bool, send func() 
 	q.sentToday++
 	q.mu.Unlock()
 	return nil
+}
+
+func (q *Queue) reserveDedup(key string, now time.Time) (uint64, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.dedup == nil {
+		q.dedup = make(map[string]dedupEntry)
+	}
+	if entry, ok := q.dedup[key]; ok && (entry.inFlight || now.Sub(entry.at) < dedupWindow) {
+		q.duplicatesSuppressed++
+		return 0, false
+	}
+	q.dedupSeq++
+	token := q.dedupSeq
+	q.dedup[key] = dedupEntry{at: now, token: token, inFlight: true}
+	q.dedupOps++
+	if q.dedupOps%256 == 0 {
+		for candidate, entry := range q.dedup {
+			if !entry.inFlight && now.Sub(entry.at) >= 2*dedupWindow {
+				delete(q.dedup, candidate)
+			}
+		}
+	}
+	return token, true
+}
+
+func (q *Queue) finishDedup(key string, token uint64, sent bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	entry, ok := q.dedup[key]
+	if !ok || entry.token != token {
+		return
+	}
+	if !sent {
+		delete(q.dedup, key)
+		return
+	}
+	entry.at = time.Now()
+	entry.inFlight = false
+	q.dedup[key] = entry
 }
 
 // waitTurn duerme lo que falte para respetar el ritmo. Devuelve el error del
@@ -230,10 +307,11 @@ func (q *Queue) Snapshot() Snapshot {
 		sent = 0
 	}
 	return Snapshot{
-		Day:       today,
-		SentToday: sent,
-		Budget:    q.budgetAt(now),
-		Anchor:    q.anchor,
-		Slowed:    q.slowed,
+		Day:                  today,
+		SentToday:            sent,
+		Budget:               q.budgetAt(now),
+		Anchor:               q.anchor,
+		Slowed:               q.slowed,
+		DuplicatesSuppressed: q.duplicatesSuppressed,
 	}
 }

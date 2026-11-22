@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	imagegif "image/gif"
 	"os/exec"
 	"strings"
 	"time"
@@ -72,6 +73,36 @@ func VideoAWebP(ctx context.Context, video []byte, segundos int) ([]byte, error)
 		"-an", "-f", "webp", salida,
 	}
 	return ejecutar(ctx, args, video)
+}
+
+// GIFAVideo convierte una reacción GIF a MP4 con reproducción en bucle. Los
+// clientes de WhatsApp representan un GIF como VideoMessage MP4 con
+// gifPlayback=true; subir los bytes GIF fingiendo que son video/mp4 produce un
+// mensaje roto o invisible.
+func GIFAVideo(ctx context.Context, data []byte) ([]byte, error) {
+	if !HayFFmpeg() {
+		return nil, ErrSinFFmpeg
+	}
+	cfg, err := imagegif.DecodeConfig(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("GIF inválido: %w", err)
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > 4096 || cfg.Height > 4096 ||
+		int64(cfg.Width)*int64(cfg.Height) > 16_000_000 {
+		return nil, fmt.Errorf("GIF con dimensiones no admitidas: %dx%d", cfg.Width, cfg.Height)
+	}
+	filtro := "scale=w='min(640,iw)':h='min(640,ih)':force_original_aspect_ratio=decrease," +
+		"pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p"
+	args := []string{
+		"-hide_banner", "-loglevel", "error",
+		"-i", "pipe:0", "-t", "15",
+		"-vf", filtro,
+		"-c:v", "libx264", "-preset", "veryfast", "-crf", "27",
+		"-pix_fmt", "yuv420p", "-an",
+		"-movflags", "frag_keyframe+empty_moov",
+		"-f", "mp4", "pipe:1",
+	}
+	return ejecutar(ctx, args, data)
 }
 
 // WebPAVideo convierte un sticker (fijo o animado) en MP4, en local.

@@ -7,6 +7,49 @@ import (
 	"go.mau.fi/whatsmeow/proto/waE2E"
 )
 
+func TestImageMIMEUsaLosMetadatosReales(t *testing.T) {
+	cases := []struct {
+		data []byte
+		want string
+	}{
+		{append([]byte("\x89PNG\r\n\x1a\n"), make([]byte, 32)...), "image/png"},
+		{append([]byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00"), make([]byte, 24)...), "image/jpeg"},
+		{append([]byte("GIF89a"), make([]byte, 32)...), "image/gif"},
+		{append([]byte("RIFF\x10\x00\x00\x00WEBPVP8 "), make([]byte, 24)...), "image/webp"},
+	}
+	for _, tc := range cases {
+		if got, err := imageMIME(tc.data); err != nil || got != tc.want {
+			t.Errorf("imageMIME(%q…) = %q, %v; want %q", tc.data[:4], got, err, tc.want)
+		}
+	}
+	if _, err := imageMIME([]byte("no es una imagen")); err == nil {
+		t.Fatal("datos no gráficos debían rechazarse en vez de fingir image/jpeg")
+	}
+}
+
+func TestAudioMIMEReconoceFormatosAdmitidos(t *testing.T) {
+	cases := []struct {
+		data []byte
+		want string
+	}{
+		{append([]byte("ID3"), make([]byte, 16)...), "audio/mpeg"},
+		{append([]byte{0xff, 0xfb}, make([]byte, 16)...), "audio/mpeg"},
+		{append([]byte{0, 0, 0, 24}, append([]byte("ftypM4A "), make([]byte, 16)...)...), "audio/mp4"},
+		{append([]byte{0xff, 0xf1}, make([]byte, 16)...), "audio/aac"},
+		{append([]byte("OggS"), make([]byte, 16)...), "audio/ogg"},
+		{append([]byte("fLaC"), make([]byte, 16)...), "audio/flac"},
+		{append([]byte("RIFF\x10\x00\x00\x00WAVE"), make([]byte, 16)...), "audio/wav"},
+	}
+	for _, tc := range cases {
+		if got, err := audioMIME(tc.data); err != nil || got != tc.want {
+			t.Errorf("audioMIME = %q, %v; want %q", got, err, tc.want)
+		}
+	}
+	if _, err := audioMIME([]byte("texto")); err == nil {
+		t.Fatal("texto no debe declararse audio/mpeg")
+	}
+}
+
 func TestCaptionImagenConservaElEnvioNoInteractivo(t *testing.T) {
 	got := captionImagen("Título", "Cuerpo", "Pie")
 	if got != "Título\n\nCuerpo\n\nPie" {

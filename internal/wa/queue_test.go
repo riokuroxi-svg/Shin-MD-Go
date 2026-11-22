@@ -3,6 +3,7 @@ package wa
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -79,6 +80,45 @@ func TestQueueSerializesSends(t *testing.T) {
 
 	if got := atomic.LoadInt32(&maxSeen); got != 1 {
 		t.Fatalf("%d envíos a la vez, la cola no está serializando", got)
+	}
+}
+
+func TestQueueSuppressesExactDuplicate(t *testing.T) {
+	q := NewQueue(fastConfig())
+	var sent atomic.Int32
+	if err := q.DoDedup(context.Background(), 1, true, "same", func() error {
+		sent.Add(1)
+		return nil
+	}); err != nil {
+		t.Fatalf("primer envío: %v", err)
+	}
+	start := time.Now()
+	err := q.DoDedup(context.Background(), 1, true, "same", func() error {
+		sent.Add(1)
+		return nil
+	})
+	if !errors.Is(err, ErrDuplicateSuppressed) {
+		t.Fatalf("segundo envío = %v, se esperaba ErrDuplicateSuppressed", err)
+	}
+	if time.Since(start) > 100*time.Millisecond {
+		t.Fatal("el duplicado esperó la cola en vez de descartarse antes")
+	}
+	if sent.Load() != 1 {
+		t.Fatalf("se ejecutaron %d envíos, se esperaba 1", sent.Load())
+	}
+	if q.Snapshot().DuplicatesSuppressed != 1 {
+		t.Fatal("el snapshot no contó el duplicado suprimido")
+	}
+}
+
+func TestQueueFailedSendDoesNotPoisonDedup(t *testing.T) {
+	q := NewQueue(fastConfig())
+	boom := errors.New("falló")
+	if err := q.DoDedup(context.Background(), 1, true, "retry", func() error { return boom }); !errors.Is(err, boom) {
+		t.Fatalf("primer intento = %v", err)
+	}
+	if err := q.DoDedup(context.Background(), 1, true, "retry", func() error { return nil }); err != nil {
+		t.Fatalf("el reintento legítimo quedó suprimido: %v", err)
 	}
 }
 

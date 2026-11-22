@@ -30,7 +30,7 @@ import (
 	"shin-go/internal/xlog"
 )
 
-var version = "0.26.0-rc1"
+var version = "0.27.0-rc1"
 
 // numeroDeCodigo es el número pasado en --code, tal cual (se normaliza al
 // usarlo). Vive aquí y no en una variable local de main porque la

@@ -101,6 +101,32 @@ func TestClaimRollCaducado(t *testing.T) {
 	}
 }
 
+func TestDeletePendingRollNoBorraUnoReclamado(t *testing.T) {
+	db, ctx := storeGacha(t)
+	if err := db.SaveRoll(ctx, rollDePrueba("PENDIENTE", ana)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeletePendingRoll(ctx, chatGacha, "PENDIENTE"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RollByMessage(ctx, chatGacha, "PENDIENTE"); !errors.Is(err, ErrRollNotFound) {
+		t.Fatalf("el pendiente debía borrarse: %v", err)
+	}
+
+	if err := db.SaveRoll(ctx, rollDePrueba("RECLAMADO", ana)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ClaimRoll(ctx, chatGacha, "RECLAMADO", ana, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.DeletePendingRoll(ctx, chatGacha, "RECLAMADO"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.RollByMessage(ctx, chatGacha, "RECLAMADO"); err != nil {
+		t.Fatalf("un roll reclamado no debe borrarse: %v", err)
+	}
+}
+
 func TestClaimRollInexistente(t *testing.T) {
 	db, ctx := storeGacha(t)
 	if _, err := db.ClaimRoll(ctx, chatGacha, "NOEXISTE", ana, time.Now()); !errors.Is(err, ErrRollNotFound) {

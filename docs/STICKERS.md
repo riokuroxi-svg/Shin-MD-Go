@@ -155,7 +155,7 @@ genera el propio `libwebp_anim`. La prueba automática cubre los tres caminos.
 ## 7. Cómo se prueba
 
 ```bash
-go test ./internal/media -v        # 21 pruebas: EXIF, formas, filtros, vídeo
+go test ./internal/media -v        # EXIF, formas, filtros y conversiones de vídeo/GIF
 go test ./cmds -run Sticker -v     # opciones y alias
 ```
 

@@ -17,7 +17,8 @@ import (
 
 // Parsed es el resultado de mirar un mensaje entrante.
 type Parsed struct {
-	Text      string // texto plano (vacío si es botón)
+	Text      string // texto plano completo (vacío si es botón)
+	ArgText   string // texto después del nombre del comando, conservando espacios internos
 	ButtonID  string // id del botón tocado (formato "comando:args")
 	IsButton  bool
 	IsCommand bool // el texto empieza con prefijo
@@ -75,7 +76,8 @@ func ParseMessage(msg *waE2E.Message, prefixes []string) Parsed {
 			out.IsCommand = true
 			out.Prefix = p
 			out.Command = strings.ToLower(fields[0])
-			out.Args = fields[1:]
+			out.ArgText = strings.TrimSpace(rest[len(fields[0]):])
+			out.Args = strings.Fields(out.ArgText)
 			break
 		}
 	}

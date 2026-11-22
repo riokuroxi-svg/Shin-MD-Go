@@ -1,6 +1,6 @@
 # Música — `.play`, previews y spotDL opcional
 
-_20-nov-2026 · versión 0.26.0-rc1_
+_20-nov-2026 · versión 0.27.0-rc1_
 
 `.play` conserva su motor integrado y suma un backend externo opcional. El bot
 Go no depende de Node y no descarga ejecutables durante el arranque.
@@ -10,7 +10,8 @@ Go no depende de Node y no descarga ejecutables durante el arranque.
 | Fuente | Qué entrega | Marca |
 |---|---|---|
 | **Audius** | audio completo del catálogo libre | 🟢 descarga libre |
-| **Deezer / iTunes** | ficha y preview oficial de 30 s | 🟡 preview |
+| **iTunes** | ficha, carátula y preview oficial de 30 s | 🟡 preview |
+| **Deezer** | fuente opcional tolerada; en la auditoría respondió 403 | 🟡 solo si vuelve a estar disponible |
 | **spotDL** (opcional) | pista resuelta por el proveedor configurado en spotDL | 🟣 spotDL |
 
 `Pista.Libre` solo se usa para las fuentes realmente libres. Una pista resuelta
@@ -52,8 +53,8 @@ Al definir `SPOTDL_PATH`, el arranque resuelve ambos ejecutables y consulta
 `soundcloud`, `bandcamp` y `piped`, separados por comas. Si se omite o queda
 vacío, la configuración prioriza `piped,soundcloud,bandcamp` antes de YouTube.
 `SPOTDL_COOKIE_FILE` pasa un archivo de cookies existente sin copiarlo ni
-imprimir su contenido. Un fallo solo desactiva spotDL; Audius, Deezer e iTunes
-siguen disponibles.
+imprimir su contenido. Un fallo solo desactiva spotDL; Audius e iTunes siguen
+disponibles y el fallo de Deezer se trata como resultado parcial.
 
 ### VPS Linux
 
@@ -88,17 +89,19 @@ SPOTDL_FFMPEG=ffmpeg
 ## Uso
 
 ```text
-.play <nombre>             Audius + Deezer + iTunes, como antes
+.play <nombre>             busca y muestra carátula + botones
 .play <URL de Spotify>     fuerza spotDL
 .play spotify:track:...    fuerza spotDL
 .play spotdl:<consulta>    fuerza spotDL con búsqueda de texto
 .play N                    descarga el resultado N de la última lista
-.escucha <nombre>          preview oficial de Deezer/iTunes
+.escucha <nombre|N>        envía el preview oficial disponible
 ```
 
 Una búsqueda de texto normal no abre un proceso externo si las fuentes rápidas
-respondieron. Si no devolvieron nada y spotDL está habilitado, se usa como
-fallback. El prefijo `spotdl:` permite pedirlo explícitamente.
+respondieron. La tarjeta usa la carátula del primer resultado y ofrece descarga,
+preview, selector y enlace de origen según corresponda. Si no hubo resultados y
+spotDL está habilitado, se usa como fallback. El prefijo `spotdl:` permite
+pedirlo explícitamente.
 
 ## Límites del adaptador
 
@@ -109,6 +112,7 @@ fallback. El prefijo `spotdl:` permite pedirlo explícitamente.
 - metadatos limitados a 4 MB y consultas a 500 caracteres;
 - máximo 60 s para resolver metadatos y 30–900 s configurables para descargar;
 - archivo temporal privado, eliminado al terminar;
+- streams, previews y carátulas con filtro anti-SSRF, redirecciones revalidadas y MIME real;
 - validación de archivo regular y cabecera MP3 antes de copiar un byte al envío;
 - máximo dos descargas simultáneas por chat, igual que el motor anterior;
 - al cancelar o vencer el contexto en Linux se mata el grupo completo de
@@ -130,7 +134,7 @@ Las pruebas automatizadas usan un ejecutable fingido y verifican:
 - cancelación por contexto y proceso ausente;
 - cookies, lista cerrada de proveedores y configuración desde `.env` con plazo
   acotado;
-- etiquetas `🟢`, `🟡` y `🟣`, lista numerada y semáforo por chat.
+- etiquetas `🟢`, `🟡` y `🟣`, carátula/acciones, preview real, lista numerada y semáforo por chat.
 
 La comprobación manual del motor integrado descargó una pista libre de Audius
 de 7.48 MB, MP3/ID3 a 320 kbps. El adaptador real resolvió con spotDL 4.5.2 y

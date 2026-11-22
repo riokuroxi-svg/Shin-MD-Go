@@ -43,6 +43,16 @@ func (t transporteInteractivo) Send(ctx context.Context, chat types.JID, msg *wa
 	return err
 }
 
+func (t transporteInteractivo) SendWithID(ctx context.Context, chat types.JID, msg *waE2E.Message, nodes []binary.Node, messageID string) error {
+	extra := whatsmeow.SendRequestExtra{ID: types.MessageID(messageID)}
+	if len(nodes) > 0 {
+		n := nodes
+		extra.AdditionalNodes = &n
+	}
+	_, err := t.client.waClient.SendMessage(ctx, chat, msg, extra)
+	return err
+}
+
 func (c *Client) sendTextoDirecto(ctx context.Context, chat types.JID, text string) error {
 	_, err := c.waClient.SendMessage(ctx, chat, &waE2E.Message{Conversation: proto.String(text)})
 	return err
@@ -88,13 +98,17 @@ func (c *Client) trySend(ctx context.Context, chat types.JID, msg *waE2E.Message
 // SendMenu expresa la intención del comando .menu. Por defecto intenta el
 // protobuf envuelto estilo Baileys, luego el nativo directo y por último texto.
 func (c *Client) SendMenu(ctx context.Context, chat JID, title, body, footer string, priority bool, buttons ...interactivos.Button) error {
-	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
+	parts := bytesOf(title, body, footer)
+	parts = append(parts, stableJSON(buttons))
+	return c.queueDedup(ctx, chat, "menu", len([]rune(body)), priority, parts, func() error {
 		return c.interactivos.SendMenu(ctx, chat.whatsmeow(), title, body, footer, buttons...)
 	})
 }
 
 func (c *Client) SendButtons(ctx context.Context, chat JID, title, body, footer string, priority bool, buttons ...interactivos.Button) error {
-	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
+	parts := bytesOf(title, body, footer)
+	parts = append(parts, stableJSON(buttons))
+	return c.queueDedup(ctx, chat, "buttons", len([]rune(body)), priority, parts, func() error {
 		return c.interactivos.SendButtons(ctx, chat.whatsmeow(), title, body, footer, nil, buttons...)
 	})
 }
@@ -117,23 +131,55 @@ func (c *Client) SendButtonsImage(ctx context.Context, chat JID, image []byte, t
 	if len(buttons) == 0 {
 		return c.SendImage(ctx, chat, image, captionImagen(title, body, footer), priority)
 	}
-	imgMsg, err := c.uploadImage(ctx, image)
-	if err != nil {
-		c.Log.Warn("no se pudo subir la cabecera del interactivo (" + err.Error() + "); se envía sin imagen")
-	}
-	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
+	parts := [][]byte{image, []byte(title), []byte(body), []byte(footer), stableJSON(buttons)}
+	return c.queueDedup(ctx, chat, "buttons-image", len([]rune(body)), priority, parts, func() error {
+		imgMsg, err := c.uploadImage(ctx, image)
+		if err != nil && c.Log != nil {
+			c.Log.Warn("no se pudo subir la cabecera del interactivo (" + err.Error() + "); se envía sin imagen")
+		}
 		return c.interactivos.SendButtons(ctx, chat.whatsmeow(), title, body, footer, imgMsg, buttons...)
 	})
 }
 
-func (c *Client) SendCarousel(ctx context.Context, chat JID, body string, priority bool, cards ...interactivos.Card) error {
+// GenerateMessageID obtiene un ID opaco con el generador oficial de
+// whatsmeow. No se fabrican ni alteran metadatos del protocolo.
+func (c *Client) GenerateMessageID() string {
+	if c == nil || c.waClient == nil {
+		return ""
+	}
+	return string(c.waClient.GenerateMessageID())
+}
+
+// SendButtonsImageWithID usa el ID pre-generado en todas las estrategias y en
+// su fallback. Así, un botón puede apuntar al propio mensaje de forma segura.
+func (c *Client) SendButtonsImageWithID(ctx context.Context, chat JID, messageID string, image []byte, title, body, footer string, priority bool, buttons ...interactivos.Button) error {
+	if strings.TrimSpace(messageID) == "" {
+		return errors.New("ID de mensaje vacío")
+	}
+	if len(buttons) == 0 {
+		return errors.New("el envío con ID requiere al menos un botón")
+	}
 	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
+		imgMsg, err := c.uploadImage(ctx, image)
+		if err != nil && c.Log != nil {
+			c.Log.Warn("no se pudo subir la cabecera del interactivo (" + err.Error() + "); se envía sin imagen")
+		}
+		return c.interactivos.SendButtonsWithID(ctx, chat.whatsmeow(), messageID, title, body, footer, imgMsg, buttons...)
+	})
+}
+
+func (c *Client) SendCarousel(ctx context.Context, chat JID, body string, priority bool, cards ...interactivos.Card) error {
+	parts := bytesOf(body)
+	parts = append(parts, stableJSON(cards))
+	return c.queueDedup(ctx, chat, "carousel", len([]rune(body)), priority, parts, func() error {
 		return c.interactivos.SendCarousel(ctx, chat.whatsmeow(), body, "", cards...)
 	})
 }
 
 func (c *Client) SendList(ctx context.Context, chat JID, title, body, buttonText, footer string, priority bool, sections ...interactivos.ListSection) error {
-	return c.Queue.Do(ctx, len([]rune(body)), priority, func() error {
+	parts := bytesOf(title, body, buttonText, footer)
+	parts = append(parts, stableJSON(sections))
+	return c.queueDedup(ctx, chat, "list", len([]rune(body)), priority, parts, func() error {
 		return c.interactivos.SendList(ctx, chat.whatsmeow(), title, body, buttonText, footer, sections...)
 	})
 }
@@ -279,6 +325,10 @@ func (c *Client) DeleteMessage(ctx context.Context, chat, sender JID, id types.M
 // uploadImage sube una imagen y devuelve el ImageMessage listo para encabezar
 // una tarjeta interactiva.
 func (c *Client) uploadImage(ctx context.Context, data []byte) (*waE2E.ImageMessage, error) {
+	mime, err := imageMIME(data)
+	if err != nil {
+		return nil, err
+	}
 	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaImage)
 	if err != nil {
 		return nil, err
@@ -290,6 +340,6 @@ func (c *Client) uploadImage(ctx context.Context, data []byte) (*waE2E.ImageMess
 		FileEncSHA256: up.FileEncSHA256,
 		FileSHA256:    up.FileSHA256,
 		FileLength:    proto.Uint64(up.FileLength),
-		Mimetype:      proto.String("image/jpeg"),
+		Mimetype:      proto.String(mime),
 	}, nil
 }

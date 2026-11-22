@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,6 +49,21 @@ import (
 // usa en producción; el SO es solo una etiqueta para la validación.
 const PairDisplayName = "Chrome (Linux)"
 
+type readBatch struct {
+	chat      types.JID
+	sender    types.JID
+	ids       []types.MessageID
+	timestamp time.Time
+}
+
+type composingState struct {
+	refs     int
+	cancel   context.CancelFunc
+	done     chan struct{} // el bucle de refresh terminó
+	finished chan struct{} // paused se envió y el slot puede reutilizarse
+	closing  bool
+}
+
 type Client struct {
 	waClient     *whatsmeow.Client
 	Queue        *Queue
@@ -64,6 +81,17 @@ type Client struct {
 
 	onMessage   func(ctx context.Context, msg *IncomingMessage)
 	onGroupInfo func(ctx context.Context, evt *GroupChange)
+
+	readMu      sync.Mutex
+	readPending map[string]*readBatch
+	readTimer   *time.Timer
+
+	composingMu sync.Mutex
+	composing   map[string]*composingState
+
+	// presenceSender solo existe como punto de inyección para las pruebas del
+	// ciclo composing→paused. Producción usa waClient.SendChatPresence.
+	presenceSender func(context.Context, JID, types.ChatPresence)
 
 	// qrVisible: el usuario eligió vincular por QR en el menú. Solo entonces
 	// se dibuja el código en la terminal; con código de 8 letras no se pinta
@@ -107,14 +135,16 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityS
 	cli.EnableAutoReconnect = true // clave: nada de borrar la sesión por cortes de red
 
 	c := &Client{
-		waClient:  cli,
-		Queue:     NewQueue(cfg),
-		IDs:       NewResolver(mem, log),
-		Log:       log,
-		StartedAt: time.Now(),
-		container: container,
-		cfg:       cfg,
-		baseCtx:   ctx,
+		waClient:    cli,
+		Queue:       NewQueue(cfg),
+		IDs:         NewResolver(mem, log),
+		Log:         log,
+		StartedAt:   time.Now(),
+		container:   container,
+		cfg:         cfg,
+		baseCtx:     ctx,
+		readPending: make(map[string]*readBatch),
+		composing:   make(map[string]*composingState),
 	}
 	// El orden es configurable; si el .env omite texto, se añade al final.
 	// Los comandos no conocen ninguna de estas estrategias.
@@ -142,8 +172,10 @@ func New(ctx context.Context, cfg config.Config, log *xlog.Logger, mem IdentityS
 		case *events.LoggedOut:
 			log.Err("Sesión cerrada desde el teléfono (LoggedOut) — hace falta vincular otra vez")
 		case *events.Message:
+			msg := NormalizeMessage(evt, c.cfg.Prefixes)
+			c.QueueReadReceipt(msg)
 			if c.onMessage != nil {
-				c.onMessage(c.baseCtx, NormalizeMessage(evt, c.cfg.Prefixes))
+				c.onMessage(c.baseCtx, msg)
 			}
 		case *events.GroupInfo:
 			// La conversión al modelo interno sucede aquí, antes del callback del
@@ -504,7 +536,7 @@ func (c *Client) Login(ctx context.Context, phone string) error {
 
 // SendText respeta la cola anti-ban. priority salta el cupo de calentamiento.
 func (c *Client) SendText(ctx context.Context, chat JID, text string, priority bool) error {
-	return c.Queue.Do(ctx, len([]rune(text)), priority, func() error {
+	return c.queueDedup(ctx, chat, "text", len([]rune(text)), priority, bytesOf(text), func() error {
 		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), &waE2E.Message{Conversation: proto.String(text)})
 		return err
 	})
@@ -533,8 +565,25 @@ func (c *Client) SendTextID(ctx context.Context, chat JID, text string, priority
 	return id, err
 }
 
+func imageMIME(data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", errVacio
+	}
+	mime := strings.SplitN(http.DetectContentType(data), ";", 2)[0]
+	switch mime {
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
+		return mime, nil
+	default:
+		return "", fmt.Errorf("formato de imagen no admitido: %s", mime)
+	}
+}
+
 // SendImageID sube una imagen con pie de foto y devuelve el id del mensaje.
 func (c *Client) SendImageID(ctx context.Context, chat JID, data []byte, caption string, priority bool) (string, error) {
+	mime, err := imageMIME(data)
+	if err != nil {
+		return "", err
+	}
 	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaImage)
 	if err != nil {
 		return "", err
@@ -547,7 +596,7 @@ func (c *Client) SendImageID(ctx context.Context, chat JID, data []byte, caption
 		FileEncSHA256: up.FileEncSHA256,
 		FileSHA256:    up.FileSHA256,
 		FileLength:    proto.Uint64(up.FileLength),
-		Mimetype:      proto.String("image/jpeg"),
+		Mimetype:      proto.String(mime),
 	}}
 	var id string
 	err = c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
@@ -566,24 +615,29 @@ func (c *Client) SendImageID(ctx context.Context, chat JID, data []byte, caption
 
 // SendImage sube y manda una imagen con pie de foto.
 func (c *Client) SendImage(ctx context.Context, chat JID, data []byte, caption string, priority bool) error {
-	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaImage)
+	mime, err := imageMIME(data)
 	if err != nil {
 		return err
 	}
-	msg := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
-		Caption:       proto.String(caption),
-		URL:           proto.String(up.URL),
-		DirectPath:    proto.String(up.DirectPath),
-		MediaKey:      up.MediaKey,
-		FileEncSHA256: up.FileEncSHA256,
-		FileSHA256:    up.FileSHA256,
-		FileLength:    proto.Uint64(up.FileLength),
-		Mimetype:      proto.String("image/jpeg"),
-	}}
-	return c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
-		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
-		return err
-	})
+	return c.queueDedup(ctx, chat, "image", len([]rune(caption)), priority,
+		[][]byte{data, []byte(caption), []byte(mime)}, func() error {
+			up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaImage)
+			if err != nil {
+				return err
+			}
+			msg := &waE2E.Message{ImageMessage: &waE2E.ImageMessage{
+				Caption:       proto.String(caption),
+				URL:           proto.String(up.URL),
+				DirectPath:    proto.String(up.DirectPath),
+				MediaKey:      up.MediaKey,
+				FileEncSHA256: up.FileEncSHA256,
+				FileSHA256:    up.FileSHA256,
+				FileLength:    proto.Uint64(up.FileLength),
+				Mimetype:      proto.String(mime),
+			}}
+			_, err = c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
+			return err
+		})
 }
 
 // SendProto manda un mensaje ya construido (encuestas, catálogos, botones que
@@ -613,25 +667,26 @@ func (c *Client) SendDocument(ctx context.Context, chat JID, data []byte, nombre
 	if mimetype == "" {
 		mimetype = "application/octet-stream"
 	}
-	up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaDocument)
-	if err != nil {
-		return err
-	}
-	msg := &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
-		URL:           proto.String(up.URL),
-		DirectPath:    proto.String(up.DirectPath),
-		MediaKey:      up.MediaKey,
-		FileEncSHA256: up.FileEncSHA256,
-		FileSHA256:    up.FileSHA256,
-		FileLength:    proto.Uint64(up.FileLength),
-		Mimetype:      proto.String(mimetype),
-		FileName:      proto.String(nombre),
-		Title:         proto.String(nombre),
-	}}
-	return c.Queue.Do(ctx, 120, priority, func() error {
-		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
-		return err
-	})
+	return c.queueDedup(ctx, chat, "document", 120, priority,
+		[][]byte{data, []byte(nombre), []byte(mimetype)}, func() error {
+			up, err := c.waClient.Upload(ctx, data, whatsmeow.MediaDocument)
+			if err != nil {
+				return err
+			}
+			msg := &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{
+				URL:           proto.String(up.URL),
+				DirectPath:    proto.String(up.DirectPath),
+				MediaKey:      up.MediaKey,
+				FileEncSHA256: up.FileEncSHA256,
+				FileSHA256:    up.FileSHA256,
+				FileLength:    proto.Uint64(up.FileLength),
+				Mimetype:      proto.String(mimetype),
+				FileName:      proto.String(nombre),
+				Title:         proto.String(nombre),
+			}}
+			_, err = c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
+			return err
+		})
 }
 
 // PerfilPublico devuelve lo que WhatsApp deja ver de alguien sin ser su

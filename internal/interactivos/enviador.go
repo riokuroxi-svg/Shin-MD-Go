@@ -23,6 +23,23 @@ type Transport interface {
 	Send(context.Context, types.JID, *waE2E.Message, []binary.Node) error
 }
 
+// IDTransport es la extensión opcional usada cuando una acción debe apuntar al
+// mismo mensaje que la contiene. El ID lo genera whatsmeow, no el comando.
+type IDTransport interface {
+	SendWithID(context.Context, types.JID, *waE2E.Message, []binary.Node, string) error
+}
+
+func enviarTransportado(ctx context.Context, t Transport, jid types.JID, msg *waE2E.Message, nodes []binary.Node, messageID string) error {
+	if messageID == "" {
+		return t.Send(ctx, jid, msg, nodes)
+	}
+	conID, ok := t.(IDTransport)
+	if !ok {
+		return errors.New("el transporte no admite ID pre-generado")
+	}
+	return conID.SendWithID(ctx, jid, msg, nodes, messageID)
+}
+
 type Logger interface{ Warn(string) }
 
 // Enviador es el puerto que usan wa.Client y, a través de bot.Messenger, todos
@@ -30,6 +47,7 @@ type Logger interface{ Warn(string) }
 type Enviador interface {
 	SendMenu(context.Context, types.JID, string, string, string, ...Button) error
 	SendButtons(context.Context, types.JID, string, string, string, *waE2E.ImageMessage, ...Button) error
+	SendButtonsWithID(context.Context, types.JID, string, string, string, string, *waE2E.ImageMessage, ...Button) error
 	SendList(context.Context, types.JID, string, string, string, string, ...ListSection) error
 	SendCarousel(context.Context, types.JID, string, string, ...Card) error
 }
@@ -65,7 +83,7 @@ func (e estrategiaProto) Enviar(ctx context.Context, t Transport, jid types.JID,
 	if err != nil {
 		return err
 	}
-	return t.Send(ctx, jid, msg, nodes)
+	return enviarTransportado(ctx, t, jid, msg, nodes, p.MessageID)
 }
 
 type estrategiaListaClasica struct{}
@@ -78,7 +96,7 @@ func (estrategiaListaClasica) Enviar(ctx context.Context, t Transport, jid types
 	}
 	// Sin AdditionalNodes: el whatsmeow fijado reconoce ListMessage y añade
 	// exactamente un <biz><list v="2" type="product_list"/></biz>.
-	return t.Send(ctx, jid, msg, nil)
+	return enviarTransportado(ctx, t, jid, msg, nil, p.MessageID)
 }
 
 type estrategiaTexto struct{}
@@ -89,7 +107,7 @@ func (estrategiaTexto) Enviar(ctx context.Context, t Transport, jid types.JID, p
 	if strings.TrimSpace(text) == "" {
 		return errors.New("fallback de texto vacío")
 	}
-	return t.Send(ctx, jid, &waE2E.Message{Conversation: proto.String(text)}, nil)
+	return enviarTransportado(ctx, t, jid, &waE2E.Message{Conversation: proto.String(text)}, nil, p.MessageID)
 }
 
 // Constructores públicos: permiten cambiar el orden en tests o en una futura
@@ -187,6 +205,13 @@ func (c *Cadena) SendMenu(ctx context.Context, jid types.JID, title, body, foote
 
 func (c *Cadena) SendButtons(ctx context.Context, jid types.JID, title, body, footer string, image *waE2E.ImageMessage, buttons ...Button) error {
 	return c.enviar(ctx, jid, Peticion{Clase: ClaseBotones, Title: title, Body: body, Footer: footer, Image: image, Buttons: buttons})
+}
+
+func (c *Cadena) SendButtonsWithID(ctx context.Context, jid types.JID, messageID, title, body, footer string, image *waE2E.ImageMessage, buttons ...Button) error {
+	if strings.TrimSpace(messageID) == "" {
+		return errors.New("ID de mensaje vacío")
+	}
+	return c.enviar(ctx, jid, Peticion{Clase: ClaseBotones, MessageID: messageID, Title: title, Body: body, Footer: footer, Image: image, Buttons: buttons})
 }
 
 func (c *Cadena) SendList(ctx context.Context, jid types.JID, title, body, buttonText, footer string, sections ...ListSection) error {

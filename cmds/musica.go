@@ -12,13 +12,11 @@
 //	.play spotdl:<consulta>  fuerza ese backend externo.
 //	.escucha                 muestra el preview oficial de Deezer/iTunes.
 //
-// Cambios de UX contra el JS y por qué:
+// UX:
 //
-//	· Los botones nativos de WhatsApp (el JS mandaba quick-replies) no llegan
-//	  por whatsmeow hoy: la lista queda numerada, «.play n» baja la n-ésima.
-//	· Sin caché en RAM ni en disco: era el punto más frágil del play.js
-//	  (entradas con valores clave defer dentro de defer, disco atascado) y en
-//	  Go bajar una canción libre tarda segundos, no los minutos de yt-dlp.
+//	· La búsqueda muestra la carátula real y botones para descargar, escuchar
+//	  el preview o abrir la fuente; «.play n» sigue funcionando como respaldo.
+//	· Sin caché en disco: evita enlaces vencidos y archivos abandonados.
 //	· El semáforo por chat se conserva (máx. 2 bajadas a la vez): la escucha
 //	  no tumba el bot.
 //
@@ -29,6 +27,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -144,31 +144,107 @@ func cmdPlay(c *bot.Context) error {
 	}
 	guardarLista(c.Chat, b)
 
-	descargables, _ := cuentas(b.Pistas)
-	switch {
-	case len(b.Pistas) == 0:
+	if len(b.Pistas) == 0 {
 		return c.Reply(respuestaSinPistas(b))
-	case descargables == 1 && len(b.Pistas) == 1:
-		// Único resultado con audio completo: se baja de una, sin menú, como
-		// el JS cuando yt daba una única URL.
-		if err := descargarYEnviar(c, b.Pistas[0]); err != nil {
-			return c.Reply(motivoErrorMusica(err))
-		}
-		return nil
-	default:
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "🎧 *%d resultados* para «%s» — %d con audio completo\n\n",
-			len(b.Pistas), bot.Esc(consulta), descargables)
-		for i, p := range b.Pistas[:min(5, len(b.Pistas))] {
-			fmt.Fprintf(&sb, "*%d.* %s\n", i+1, lineaPista(p))
-		}
-		if descargables > 0 {
-			sb.WriteString("\nResponde *.play N* para bajar una (🟢 libre o 🟣 spotDL).")
-		} else {
-			sb.WriteString("\nNinguna tiene licencia de descarga directa; *.escucha " + bot.Esc(consulta) + "* escucha el fragmento oficial.")
-		}
-		return c.Reply(sb.String())
 	}
+	return mostrarTarjetaPlay(c, b, consulta)
+}
+
+func mostrarTarjetaPlay(c *bot.Context, b musica.Busqueda, consulta string) error {
+	primera := b.Pistas[0]
+	tope := min(5, len(b.Pistas))
+	descargables, previews := cuentas(b.Pistas[:tope])
+
+	var body strings.Builder
+	fmt.Fprintf(&body, "*%s*\n👤 %s", bot.Esc(primera.Titulo), bot.Esc(primera.Artista))
+	if primera.Album != "" {
+		fmt.Fprintf(&body, "\n💿 %s", bot.Esc(primera.Album))
+	}
+	fmt.Fprintf(&body, "\n⏱ %s · %s", primera.Minutos(), bot.Esc(primera.Fuente))
+	if tope > 1 {
+		fmt.Fprintf(&body, "\n\n*%d resultados* · %d con audio · %d con preview\n", tope, descargables, previews)
+		for i, pista := range b.Pistas[:tope] {
+			fmt.Fprintf(&body, "\n*%d.* %s", i+1, lineaPista(pista))
+		}
+	}
+
+	buttons := make([]bot.Button, 0, 4)
+	if primera.Descargable() {
+		buttons = append(buttons, bot.QuickReply("⬇️ Descargar audio", "play:1"))
+	}
+	if primera.Preview != "" {
+		buttons = append(buttons, bot.QuickReply("▶️ Escuchar preview", "escucha:1"))
+	}
+
+	if tope > 1 {
+		rows := make([]bot.ListRow, 0, tope*2)
+		for i, pista := range b.Pistas[:tope] {
+			title := bot.ClipText(fmt.Sprintf("%d. %s", i+1, pista.Titulo), 48)
+			if pista.Descargable() {
+				rows = append(rows, bot.ListRow{
+					ID: fmt.Sprintf("play:%d", i+1), Title: title,
+					Desc: bot.ClipText(pista.Artista+" · Descargar audio", 72),
+				})
+			}
+			if pista.Preview != "" {
+				rows = append(rows, bot.ListRow{
+					ID: fmt.Sprintf("escucha:%d", i+1), Title: title,
+					Desc: bot.ClipText(pista.Artista+" · Preview oficial", 72),
+				})
+			}
+		}
+		if len(rows) > 0 {
+			buttons = append(buttons, bot.SingleSelect("🎶 Elegir canción",
+				bot.ListSection{Title: "Resultados para " + bot.ClipText(consulta, 35), Rows: rows}))
+		}
+	}
+	if origenMusicaSeguro(primera) {
+		buttons = append(buttons, bot.CTAURL("🌐 Abrir canción", primera.Origen))
+	}
+
+	footer := "Shin-MD · botones o .play N / .escucha N"
+	if primera.Caratula != "" {
+		if artwork, err := clienteMusica().DescargarCaratula(c.Ctx, primera); err == nil {
+			return c.ReplyImage(artwork, "🎵 Reproductor", body.String(), footer, buttons...)
+		} else if c.Log != nil {
+			c.Log.Warn("play: no se pudo cargar la carátula: " + err.Error())
+		}
+	}
+	if len(buttons) > 0 {
+		return c.ReplyButtons("🎵 Reproductor", body.String(), footer, buttons...)
+	}
+	return c.Reply(body.String() + "\n\nEscribe *.play N* para descargar o *.escucha N* para el preview.")
+}
+
+func origenMusicaSeguro(p musica.Pista) bool {
+	raw := p.Origen
+	if len(raw) == 0 || len(raw) > 2048 {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	allowed := map[string]bool{}
+	switch {
+	case p.Backend == musica.BackendSpotDL || p.Fuente == musica.FuenteSpotDL:
+		allowed["open.spotify.com"] = true
+		allowed["spotify.link"] = true
+	case p.Fuente == musica.FuenteAudius:
+		allowed["audius.co"] = true
+		allowed["www.audius.co"] = true
+	case p.Fuente == musica.FuenteDeezer:
+		allowed["deezer.com"] = true
+		allowed["www.deezer.com"] = true
+	case p.Fuente == musica.FuenteITunes:
+		allowed["music.apple.com"] = true
+		allowed["itunes.apple.com"] = true
+	case p.Fuente == musica.FuenteArchivo:
+		allowed["archive.org"] = true
+		allowed["www.archive.org"] = true
+	}
+	return allowed[host]
 }
 
 func consultaParaSpotDL(raw string) (string, bool) {
@@ -213,8 +289,11 @@ func playPorNumero(c *bot.Context, n int) error {
 	}
 	p := ult.pistas[n-1]
 	if !p.Descargable() {
-		return c.Reply(fmt.Sprintf("Esa (%s) solo tiene ficha; *.escucha %s* oye el preview oficial.",
-			bot.Esc(p.Titulo), bot.Esc(ult.consulta)))
+		if p.Preview != "" {
+			return c.Reply(fmt.Sprintf("Esa (%s) solo publica preview; usa *.escucha %d*.",
+				bot.Esc(p.Titulo), n))
+		}
+		return c.Reply("Esa canción no ofrece audio ni preview en el proveedor.")
 	}
 	if err := descargarYEnviar(c, p); err != nil {
 		return c.Reply(motivoErrorMusica(err))
@@ -224,10 +303,23 @@ func playPorNumero(c *bot.Context, n int) error {
 
 // descargarYEnviar: semáforo, descarga con los filtros del motor, manda.
 func descargarYEnviar(c *bot.Context, p musica.Pista) error {
+	return conSlotMusica(c, func() error {
+		var audio []byte
+		// Descargar aplica sus filtros (audio real y ≤ 24 MB); aquí solo se recoge
+		// en memoria para el envío.
+		if _, err := clienteMusica().Descargar(c.Ctx, p, &yardaMusica{&audio}); err != nil {
+			return err
+		}
+		titulo := bot.ClipText(p.Titulo+" — "+p.Artista, 120)
+		return c.Bot.SendAudioPista(c.Ctx, c.Chat, audio, titulo, p.Duracion, p.Origen, c.Priority())
+	})
+}
+
+func conSlotMusica(c *bot.Context, trabajo func() error) error {
 	muMusica.Lock()
 	if slotsMus[c.Chat] >= maxDescargasParalelas {
 		muMusica.Unlock()
-		return c.Reply("Ya tengo dos canciones bajando para este chat; cuando salgan, repite el comando.")
+		return c.Reply("Ya tengo dos audios cargándose para este chat; cuando salgan, repite el comando.")
 	}
 	slotsMus[c.Chat]++
 	muMusica.Unlock()
@@ -238,34 +330,66 @@ func descargarYEnviar(c *bot.Context, p musica.Pista) error {
 		}
 		muMusica.Unlock()
 	}()
-
-	var audio []byte
-	// Descargar aplica sus filtros (audio real y ≤ 24 MB); aquí solo se recoge
-	// en memoria para el envío.
-	if _, err := clienteMusica().Descargar(c.Ctx, p, &yardaMusica{&audio}); err != nil {
-		return err
-	}
-	titulo := bot.ClipText(p.Titulo+" — "+p.Artista, 120)
-	return c.Bot.SendAudioPista(c.Ctx, c.Chat, audio, titulo, p.Duracion, p.Origen, c.Priority())
+	return trabajo()
 }
 
 // ── .escucha ─────────────────────────────────────────────────────────────────
 
 func cmdEscucha(c *bot.Context) error {
 	caja := strings.TrimSpace(c.Text)
+	if n, solo := esSoloNumero(caja); solo {
+		return escuchaPorNumero(c, n)
+	}
 	if caja == "" {
-		return c.Reply("¿Qué escucho? Ejemplo: *.escucha daft punk*. Solo sale el fragmento de 30 s que publica la tienda.")
+		return c.Reply("¿Qué escucho? Ejemplo: *.escucha daft punk*. Solo sale el fragmento oficial de 30 s que publica la tienda.")
 	}
 	b := clienteMusica().Buscar(c.Ctx, caja, 5)
+	guardarLista(c.Chat, b)
 	for _, p := range b.Pistas {
 		if p.Preview != "" {
-			return c.Reply(fmt.Sprintf("🎵 *%s* — %s\n⏱ 30 s (preview oficial de %s)\n\n_Audio completo: en su página (%s)_", p.Titulo, p.Artista, p.Fuente, p.Origen))
+			return descargarYEnviarPreview(c, p)
 		}
 	}
 	if len(b.Fallos) > 0 {
 		return c.Reply(respuestaSinPistas(b))
 	}
 	return c.Reply("Ni Deezer ni iTunes tienen preview de eso; puede que solo exista en el catálogo libre (prueba *.play*).")
+}
+
+func escuchaPorNumero(c *bot.Context, n int) error {
+	muMusica.Lock()
+	ult, ok := listasMus[c.Chat]
+	muMusica.Unlock()
+	if !ok || len(ult.pistas) == 0 {
+		return c.Reply("No tengo una lista guardada; primero busca con *.play <nombre>*.")
+	}
+	if time.Since(ult.cuando) > 10*time.Minute {
+		return c.Reply("La lista ya caducó; repite la búsqueda con *.play <nombre>*.")
+	}
+	tope := min(5, len(ult.pistas))
+	if n < 1 || n > tope {
+		return c.Reply(fmt.Sprintf("Esa lista solo tiene %d; elige 1-%d.", tope, tope))
+	}
+	p := ult.pistas[n-1]
+	if p.Preview == "" {
+		return c.Reply("Esa canción no publica preview; si tiene botón de descarga, usa *.play " + strconv.Itoa(n) + "*.")
+	}
+	return descargarYEnviarPreview(c, p)
+}
+
+func descargarYEnviarPreview(c *bot.Context, p musica.Pista) error {
+	return conSlotMusica(c, func() error {
+		var audio []byte
+		if _, err := clienteMusica().DescargarPreview(c.Ctx, p, &yardaMusica{&audio}); err != nil {
+			return c.Reply("No pude cargar el preview oficial esta vez (" + bot.Esc(cerca(err.Error(), 120)) + ").")
+		}
+		titulo := bot.ClipText(p.Titulo+" — "+p.Artista+" (preview)", 120)
+		segundos := 30
+		if p.Duracion > 0 && p.Duracion < segundos {
+			segundos = p.Duracion
+		}
+		return c.Bot.SendAudioPista(c.Ctx, c.Chat, audio, titulo, segundos, p.Origen, c.Priority())
+	})
 }
 
 // ── Presentación y pelo ─────────────────────────────────────────────────────
@@ -292,7 +416,8 @@ func cuentas(pistas []musica.Pista) (descargables, conPreview int) {
 	for _, p := range pistas {
 		if p.Descargable() {
 			descargables++
-		} else if p.Preview != "" {
+		}
+		if p.Preview != "" {
 			conPreview++
 		}
 	}
@@ -323,8 +448,13 @@ func respuestaSinPistas(b musica.Busqueda) string {
 	}
 	var sb strings.Builder
 	sb.WriteString("Hoy las fuentes no responden bien: ")
-	for f, why := range b.Fallos {
-		fmt.Fprintf(&sb, "_%s_ (%s) ", bot.Esc(f), bot.Esc(cerca(why, 160)))
+	fuentes := make([]string, 0, len(b.Fallos))
+	for fuente := range b.Fallos {
+		fuentes = append(fuentes, fuente)
+	}
+	sort.Strings(fuentes)
+	for _, fuente := range fuentes {
+		fmt.Fprintf(&sb, "_%s_ (%s) ", bot.Esc(fuente), bot.Esc(cerca(b.Fallos[fuente], 160)))
 	}
 	sb.WriteString("Reintenta en un minuto.")
 	return sb.String()

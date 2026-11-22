@@ -24,24 +24,54 @@ func (c *Client) SendSticker(ctx context.Context, chat JID, webp []byte, animado
 	if len(webp) == 0 {
 		return errVacio
 	}
-	up, err := c.waClient.Upload(ctx, webp, whatsmeow.MediaImage)
-	if err != nil {
-		return err
+	return c.queueDedup(ctx, chat, "sticker", 1, priority,
+		[][]byte{webp, []byte{boolByte(animado)}}, func() error {
+			up, err := c.waClient.Upload(ctx, webp, whatsmeow.MediaImage)
+			if err != nil {
+				return err
+			}
+			msg := &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
+				URL:           proto.String(up.URL),
+				DirectPath:    proto.String(up.DirectPath),
+				MediaKey:      up.MediaKey,
+				FileEncSHA256: up.FileEncSHA256,
+				FileSHA256:    up.FileSHA256,
+				FileLength:    proto.Uint64(up.FileLength),
+				Mimetype:      proto.String("image/webp"),
+				IsAnimated:    proto.Bool(animado),
+			}}
+			_, err = c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
+			return err
+		})
+}
+
+// SendGIF manda un MP4 corto con el indicador gifPlayback. WhatsApp no acepta
+// los bytes image/gif dentro de VideoMessage: la conversión a MP4 ocurre antes
+// en internal/media y aquí se declara el metadato correcto.
+func (c *Client) SendGIF(ctx context.Context, chat JID, mp4 []byte, caption string, priority bool) error {
+	if len(mp4) == 0 {
+		return errVacio
 	}
-	msg := &waE2E.Message{StickerMessage: &waE2E.StickerMessage{
-		URL:           proto.String(up.URL),
-		DirectPath:    proto.String(up.DirectPath),
-		MediaKey:      up.MediaKey,
-		FileEncSHA256: up.FileEncSHA256,
-		FileSHA256:    up.FileSHA256,
-		FileLength:    proto.Uint64(up.FileLength),
-		Mimetype:      proto.String("image/webp"),
-		IsAnimated:    proto.Bool(animado),
-	}}
-	return c.Queue.Do(ctx, 1, priority, func() error {
-		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
-		return err
-	})
+	return c.queueDedup(ctx, chat, "gif", len([]rune(caption)), priority,
+		[][]byte{mp4, []byte(caption)}, func() error {
+			up, err := c.waClient.Upload(ctx, mp4, whatsmeow.MediaVideo)
+			if err != nil {
+				return err
+			}
+			msg := &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+				Caption:       proto.String(caption),
+				URL:           proto.String(up.URL),
+				DirectPath:    proto.String(up.DirectPath),
+				MediaKey:      up.MediaKey,
+				FileEncSHA256: up.FileEncSHA256,
+				FileSHA256:    up.FileSHA256,
+				FileLength:    proto.Uint64(up.FileLength),
+				Mimetype:      proto.String("video/mp4"),
+				GifPlayback:   proto.Bool(true),
+			}}
+			_, err = c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
+			return err
+		})
 }
 
 // SendVideo manda un MP4 (lo que devuelve `.toimg` con un sticker animado).
@@ -49,22 +79,23 @@ func (c *Client) SendVideo(ctx context.Context, chat JID, mp4 []byte, caption st
 	if len(mp4) == 0 {
 		return errVacio
 	}
-	up, err := c.waClient.Upload(ctx, mp4, whatsmeow.MediaVideo)
-	if err != nil {
-		return err
-	}
-	msg := &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
-		Caption:       proto.String(caption),
-		URL:           proto.String(up.URL),
-		DirectPath:    proto.String(up.DirectPath),
-		MediaKey:      up.MediaKey,
-		FileEncSHA256: up.FileEncSHA256,
-		FileSHA256:    up.FileSHA256,
-		FileLength:    proto.Uint64(up.FileLength),
-		Mimetype:      proto.String("video/mp4"),
-	}}
-	return c.Queue.Do(ctx, len([]rune(caption)), priority, func() error {
-		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
-		return err
-	})
+	return c.queueDedup(ctx, chat, "video", len([]rune(caption)), priority,
+		[][]byte{mp4, []byte(caption)}, func() error {
+			up, err := c.waClient.Upload(ctx, mp4, whatsmeow.MediaVideo)
+			if err != nil {
+				return err
+			}
+			msg := &waE2E.Message{VideoMessage: &waE2E.VideoMessage{
+				Caption:       proto.String(caption),
+				URL:           proto.String(up.URL),
+				DirectPath:    proto.String(up.DirectPath),
+				MediaKey:      up.MediaKey,
+				FileEncSHA256: up.FileEncSHA256,
+				FileSHA256:    up.FileSHA256,
+				FileLength:    proto.Uint64(up.FileLength),
+				Mimetype:      proto.String("video/mp4"),
+			}}
+			_, err = c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
+			return err
+		})
 }

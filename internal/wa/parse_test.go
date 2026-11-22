@@ -24,6 +24,17 @@ func TestParseTextCommand(t *testing.T) {
 	if p.Prefix != "." {
 		t.Fatalf("prefijo = %q", p.Prefix)
 	}
+	if p.ArgText != "una canción" {
+		t.Fatalf("ArgText = %q", p.ArgText)
+	}
+}
+
+func TestParsePreservesCommandArgumentSpacing(t *testing.T) {
+	msg := &waE2E.Message{Conversation: proto.String(".tomp3   https://ejemplo.test/a?q=uno%20dos")}
+	p := ParseMessage(msg, prefixes)
+	if p.ArgText != "https://ejemplo.test/a?q=uno%20dos" {
+		t.Fatalf("ArgText = %q", p.ArgText)
+	}
 }
 
 func TestParseNoPrefixIsNotCommand(t *testing.T) {

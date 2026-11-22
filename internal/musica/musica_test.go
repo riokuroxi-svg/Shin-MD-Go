@@ -149,6 +149,49 @@ func TestBuscarITunesDescartaSinPreview(t *testing.T) {
 	}
 }
 
+func TestDescargarPreviewOficial(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("preview-real"))
+	}))
+	defer s.Close()
+	c := Nuevo(Opciones{Timeout: 2 * time.Second, AudiusURL: s.URL})
+	var got strings.Builder
+	n, err := c.DescargarPreview(context.Background(), Pista{Preview: s.URL}, &got)
+	if err != nil || n != int64(len("preview-real")) || got.String() != "preview-real" {
+		t.Fatalf("preview: n=%d err=%v body=%q", n, err, got.String())
+	}
+}
+
+func TestDescargarCaratulaBloqueaRedPrivada(t *testing.T) {
+	c := Nuevo(Opciones{Timeout: time.Second})
+	_, err := c.DescargarCaratula(context.Background(), Pista{Caratula: "https://127.0.0.1/secret"})
+	if err == nil {
+		t.Fatal("la carátula no debe poder consultar loopback")
+	}
+}
+
+func TestDescargarPreviewBloqueaSSRFEnRedirect(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "audio/mpeg")
+		_, _ = w.Write([]byte("secreto"))
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer source.Close()
+
+	c := Nuevo(Opciones{Timeout: 2 * time.Second, AudiusURL: source.URL})
+	var got strings.Builder
+	if _, err := c.DescargarPreview(context.Background(), Pista{Preview: source.URL}, &got); err == nil {
+		t.Fatal("el preview siguió una redirección a otra autoridad privada")
+	}
+	if got.Len() != 0 {
+		t.Fatalf("se copiaron bytes bloqueados: %q", got.String())
+	}
+}
+
 func TestBuscarUnaFuenteCaidaNoTumbaLaBusqueda(t *testing.T) {
 	caido := servidor(t, "boom", 503)
 	vivo := servidor(t, fixtureITunes, 200)
@@ -183,7 +226,7 @@ func TestDescargarCopiaAudio(t *testing.T) {
 	}))
 	defer s.Close()
 
-	c := Nuevo(Opciones{})
+	c := Nuevo(Opciones{AudiusURL: s.URL})
 	var salida bytes.Buffer
 	n, err := c.Descargar(context.Background(), Pista{Libre: true, Stream: s.URL}, &salida)
 	if err != nil {
@@ -204,7 +247,7 @@ func TestDescargarRechazaLoQueNoEsAudio(t *testing.T) {
 	}))
 	defer s.Close()
 
-	c := Nuevo(Opciones{})
+	c := Nuevo(Opciones{AudiusURL: s.URL})
 	if _, err := c.Descargar(context.Background(), Pista{Libre: true, Stream: s.URL}, &bytes.Buffer{}); err == nil {
 		t.Fatal("debía rechazar un contenido que no es audio")
 	}
@@ -219,7 +262,7 @@ func TestDescargarCortaPorTope(t *testing.T) {
 	}))
 	defer s.Close()
 
-	c := Nuevo(Opciones{})
+	c := Nuevo(Opciones{AudiusURL: s.URL})
 	_, err := c.Descargar(context.Background(), Pista{Libre: true, Stream: s.URL}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "tope") {
 		t.Fatalf("err = %v, quiero un rechazo por tope", err)
@@ -234,7 +277,7 @@ func TestDescargarRespetaContexto(t *testing.T) {
 	}))
 	defer s.Close()
 
-	c := Nuevo(Opciones{Timeout: 5 * time.Second})
+	c := Nuevo(Opciones{Timeout: 5 * time.Second, AudiusURL: s.URL})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 

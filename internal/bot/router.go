@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -153,6 +154,8 @@ func (r *Router) Handle(ctx context.Context, evt *wa.IncomingMessage) {
 	// El texto que verán los hooks va limpio de controles e invisibles (los
 	// mismos que se usan para disfrazar "h t t p s : //" o falsificar nombres).
 	parsed.Text = CleanInvisible(parsed.Text)
+	parsed.ArgText = CleanInvisible(parsed.ArgText)
+	parsed.Args = strings.Fields(parsed.ArgText)
 
 	isOwner := IsOwner(sender, senderAlt, r.owner)
 
@@ -172,7 +175,7 @@ func (r *Router) Handle(ctx context.Context, evt *wa.IncomingMessage) {
 		IsGroup:   isGroup,
 		IsOwner:   isOwner,
 		PushName:  info.PushName,
-		Text:      parsed.Text,
+		Text:      parsed.ArgText,
 		Raw:       parsed.Text,
 	}
 
@@ -197,8 +200,10 @@ func (r *Router) Handle(ctx context.Context, evt *wa.IncomingMessage) {
 	var cmdName string
 	var args []string
 	if parsed.IsButton && parsed.ButtonID != "" {
+		parsed.ButtonID = CleanInvisible(parsed.ButtonID)
 		cmdName, args = wa.CommandFromButton(parsed.ButtonID)
 		c.Command, c.Args = cmdName, args
+		c.Text = strings.Join(args, " ")
 		c.fromButton = true
 	} else {
 		cmdName, args = parsed.Command, parsed.Args
@@ -259,6 +264,11 @@ func (r *Router) Handle(ctx context.Context, evt *wa.IncomingMessage) {
 	}
 
 	c.CmdPriority = cmd.Priority
+
+	// Presencia legítima: composing mientras el handler prepara la respuesta y
+	// paused al terminar, incluso si devuelve error o entra en pánico.
+	stopComposing := r.client.BeginComposing(ctx, chat)
+	defer stopComposing()
 
 	start := time.Now()
 	if err := cmd.Run(c); err != nil {

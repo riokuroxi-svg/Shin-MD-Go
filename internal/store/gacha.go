@@ -96,6 +96,15 @@ func (s *Store) SaveRoll(ctx context.Context, r Roll) error {
 	return err
 }
 
+// DeletePendingRoll retira un roll cuyo envío falló. Nunca borra uno que ya
+// alcanzó a reclamar alguien (un error de red puede llegar después del ACK).
+func (s *Store) DeletePendingRoll(ctx context.Context, chatID, messageID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM gacha_rolls WHERE chat_id = ? AND message_id = ? AND claimed_by IS NULL`,
+		chatID, messageID)
+	return err
+}
+
 // RollByMessage devuelve el roll anunciado en ese mensaje.
 func (s *Store) RollByMessage(ctx context.Context, chatID, messageID string) (*Roll, error) {
 	var r Roll

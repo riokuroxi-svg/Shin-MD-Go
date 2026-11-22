@@ -16,6 +16,8 @@
 package cmds
 
 import (
+	"context"
+	"encoding/hex"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -32,6 +34,14 @@ const (
 	rollCooldown  = 15 * time.Minute // lastRoll
 	claimCooldown = 30 * time.Minute // lastClaim
 )
+
+func idRollValido(id string) bool {
+	if len(id) != 22 || !strings.HasPrefix(id, "3EB0") {
+		return false
+	}
+	_, err := hex.DecodeString(id[4:])
+	return err == nil
+}
 
 func init() {
 	registerRoll()
@@ -131,34 +141,52 @@ func registerRoll() {
 
 			caption := fmt.Sprintf("❀ Nombre » *%s*\n⚥ Género » *%s*\n✰ Valor » *%s*\n"+
 				"♡ Estado » *Libre*\n❖ Fuente » *%s*\n\n"+
-				"> Responde a este mensaje con *%sclaim* para reclamarlo.\n> Tienes 60 segundos.",
+				"> Toca *Reclamar* o responde con *%sclaim*.\n> Tienes 60 segundos.",
 				personaje.Name, personaje.Gender, miles(personaje.Value),
 				orDefault(personaje.Series, "Desconocida"), c.Bot.FirstPrefix())
 
-			// Se manda y se guarda con el id del mensaje: así el reclamo no
-			// depende de adivinar nada del texto.
-			var msgID string
-			if imagen != nil {
-				msgID, err = c.Bot.SendImageID(c.Ctx, c.Chat, imagen, caption, c.CmdPriority)
-			} else {
-				msgID, err = c.Bot.SendTextID(c.Ctx, c.Chat, caption+"\n\n_(sin ilustración disponible)_", c.CmdPriority)
+			roll := func(msgID string) store.Roll {
+				return store.Roll{
+					ChatID: chat, MessageID: msgID, CharID: personaje.ID,
+					Name: personaje.Name, Value: personaje.Value, RollerID: key,
+				}
 			}
+
+			if imagen != nil {
+				// El ID lo genera whatsmeow antes del envío y se usa tanto en el
+				// mensaje como en el botón. Es opaco, no adivinable y queda ligado
+				// al chat en la base; no se confía en texto enviado por el usuario.
+				msgID := c.Bot.GenerateMessageID()
+				if msgID == "" {
+					return fmt.Errorf("no se pudo generar el ID del roll")
+				}
+				if err := c.DB.SaveRoll(c.Ctx, roll(msgID)); err != nil {
+					return err
+				}
+				err := c.ReplyImageWithID(msgID, imagen, "Gacha · personaje libre", caption,
+					"La reserva inicial dura 20 segundos.",
+					bot.QuickReply("🎴 Reclamar", "claim:"+msgID))
+				if err != nil {
+					// El contexto del handler puede ser precisamente la causa del
+					// fallo. La compensación usa un plazo propio para no dejar un roll
+					// invisible reclamable durante 60 segundos.
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					_ = c.DB.DeletePendingRoll(cleanupCtx, chat, msgID)
+					cancel()
+				}
+				return err
+			}
+
+			// Sin ilustración no se finge una tarjeta: conserva el flujo clásico
+			// de responder al mensaje y guarda el ID que confirmó WhatsApp.
+			msgID, err := c.Bot.SendTextID(c.Ctx, c.Chat, caption+"\n\n_(sin ilustración disponible)_", c.CmdPriority)
 			if err != nil {
 				return err
 			}
-			if msgID != "" {
-				if err := c.DB.SaveRoll(c.Ctx, store.Roll{
-					ChatID:    chat,
-					MessageID: msgID,
-					CharID:    personaje.ID,
-					Name:      personaje.Name,
-					Value:     personaje.Value,
-					RollerID:  key,
-				}); err != nil {
-					return err
-				}
+			if msgID == "" {
+				return fmt.Errorf("WhatsApp no devolvió el ID del roll")
 			}
-			return nil
+			return c.DB.SaveRoll(c.Ctx, roll(msgID))
 		},
 	})
 }
@@ -178,13 +206,23 @@ func registerClaim() {
 			}
 			chat, key := chatID(c), c.Key()
 
-			// El id del mensaje citado: es la llave del roll.
-			if c.Event == nil || c.Event.Quoted == nil || c.Event.Quoted.ID == "" {
-				return c.Reply(fmt.Sprintf(
-					"❀ Debes *responder* al mensaje del personaje para reclamarlo.\n"+
-						"> Saca uno con *%sroll*", c.Bot.FirstPrefix()))
+			// El botón lleva el ID opaco que whatsmeow asignó al propio roll. La
+			// alternativa compatible sigue siendo citar ese mensaje con .claim.
+			rollID := ""
+			// El fallback de texto imprime `.claim <id>`; aceptar el mismo ID al
+			// escribirlo no abre privilegios: ClaimRoll todavía exige chat, TTL,
+			// reserva y transacción atómica. También mantiene accionable la tarjeta
+			// cuando el cliente no representa botones.
+			if len(c.Args) == 1 && idRollValido(c.Args[0]) {
+				rollID = c.Args[0]
+			} else if c.Event != nil && c.Event.Quoted != nil {
+				rollID = c.Event.Quoted.ID
 			}
-			quotedID := c.Event.Quoted.ID
+			if rollID == "" {
+				return c.Reply(fmt.Sprintf(
+					"❀ Toca *Reclamar* o responde al mensaje del personaje con *%sclaim*.\n"+
+						"> Saca uno con *%sroll*", c.Bot.FirstPrefix(), c.Bot.FirstPrefix()))
+			}
 
 			ok, wait, err := c.DB.ClaimCooldown(c.Ctx, chat, key, "last_claim", claimCooldown)
 			if err != nil {
@@ -195,7 +233,7 @@ func registerClaim() {
 					formatWait(int64(wait.Seconds()))))
 			}
 
-			owned, err := c.DB.ClaimRoll(c.Ctx, chat, quotedID, key, time.Now())
+			owned, err := c.DB.ClaimRoll(c.Ctx, chat, rollID, key, time.Now())
 			switch err {
 			case nil:
 			case store.ErrAlreadyClaimed:

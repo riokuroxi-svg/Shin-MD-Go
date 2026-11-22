@@ -160,6 +160,7 @@ const (
 // Peticion es la representación interna única de cualquier interactivo.
 type Peticion struct {
 	Clase      Clase
+	MessageID  string // ID WhatsApp pre-generado cuando un botón referencia este mensaje
 	Title      string
 	Body       string
 	Footer     string

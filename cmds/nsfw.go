@@ -1,7 +1,7 @@
 // Shin-MD-Go — Copyright (C) 2026 riokuroxi-svg · AGPL-3.0-only
 //
 // nsfw.go — la parte del JS explícita CON su candado: los boorus
-// (danbooru/gelbooru/rule34 con su JSON público) detrás de «nsfw off» por
+// (Danbooru y Rule34 con JSON público) detrás de «nsfw off» por
 // defecto y solo en grupos donde un admin lo enciende.
 //
 // Qué NO se porta y por qué (deliberado):
@@ -34,11 +34,6 @@ func init() {
 		Run:  func(c *bot.Context) error { return cmdBooru(c, "danbooru") },
 	})
 	bot.Register(bot.Command{
-		Name: "gelbooru", Aliases: []string{"gbooru"}, Category: bot.CatNSFW,
-		Desc: "Busca en Gelbooru (requiere .nsfw on): .gelbooru <tags>.",
-		Run:  func(c *bot.Context) error { return cmdBooru(c, "gelbooru") },
-	})
-	bot.Register(bot.Command{
 		Name: "rule34", Aliases: []string{"r34", "rule"}, Category: bot.CatNSFW,
 		Desc: "Busca en Rule34 (requiere .nsfw on): .rule34 <tags>.",
 		Run:  func(c *bot.Context) error { return cmdBooru(c, "rule34") },
@@ -48,7 +43,6 @@ func init() {
 // urlBooru: variables para pruebas.
 var (
 	urlDanbooru = "https://danbooru.donmai.us"
-	urlGelbooru = "https://gelbooru.com"
 	urlRule34   = "https://api.rule34.xxx"
 )
 
@@ -82,7 +76,11 @@ func cmdBooru(c *bot.Context, cual string) error {
 	var imgURL, origen string
 	switch cual {
 	case "danbooru":
-		datos, err := getCorto(c.Ctx, urlDanbooru+"/posts.json?limit=3&tags="+url.QueryEscape(etiqueta))
+		base, parseErr := url.Parse(urlDanbooru)
+		if parseErr != nil || base.Hostname() == "" {
+			return c.Reply("Danbooru está mal configurado.")
+		}
+		datos, err := getCortoLimite(c.Ctx, urlDanbooru+"/posts.json?limit=3&tags="+url.QueryEscape(etiqueta), 12<<20, base.Hostname())
 		if err != nil {
 			return c.Reply("Danbooru no responde ahora.")
 		}
@@ -98,14 +96,13 @@ func cmdBooru(c *bot.Context, cual string) error {
 			imgURL = r[0].Preview
 		}
 		origen = "danbooru.donmai.us"
-	case "gelbooru", "rule34":
-		base := urlGelbooru
-		origen = "gelbooru.com"
-		if cual == "rule34" {
-			base = urlRule34
-			origen = "api.rule34.xxx"
+	case "rule34":
+		origen = "api.rule34.xxx"
+		base, parseErr := url.Parse(urlRule34)
+		if parseErr != nil || base.Hostname() == "" {
+			return c.Reply("Rule34 está mal configurado.")
 		}
-		datos, err := getCorto(c.Ctx, base+"/index.php?page=dapi&s=post&q=index&json=1&limit=3&tags="+url.QueryEscape(etiqueta))
+		datos, err := getCortoLimite(c.Ctx, urlRule34+"/index.php?page=dapi&s=post&q=index&json=1&limit=3&tags="+url.QueryEscape(etiqueta), 12<<20, base.Hostname())
 		if err != nil {
 			return c.Reply(origen + " no responde ahora.")
 		}

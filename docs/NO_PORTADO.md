@@ -11,8 +11,10 @@ motivo. Si falta en los dos lados, CI truena.
 El JS tenía ~40 comandos de «reacciones» explícitas (`anal`, `violar`,
 `bukkake`, `orgy`, `yaoi`…) que se servían sin ningún candado, en cualquier
 grupo. La vista "violar" es contenido de agresión sexual: **no se porta
-jamás**. Del resto, tres búsquedas sí se portan **con candado** (`.nsfw on`
-en grupos, apagado de serie): `danbooru`, `gelbooru`, `rule34`.
+jamás**. Del resto, dos búsquedas sí se portan **con candado** (`.nsfw on`
+en grupos, apagado de serie): `danbooru` y `rule34`. `gelbooru`/`gbooru` se
+retiraron en noviembre de 2026: su endpoint público pasó a responder `401` y
+no se va a sustituir por scraping ni por credenciales incrustadas.
 
 Tampoco: `xnxx`, `xvideos` — sin API pública fiable; scraping porno roto cada
 dos semanas es mentir.
@@ -34,6 +36,7 @@ no comandos.
 | play2, playsoundcloud, soundcloud | `.play` | búsqueda unificada; SoundCloud no se presenta como catálogo libre |
 | spotify | `.play <URL Spotify>` / `.play spotdl:…` | spotDL opcional resuelve metadatos y proveedor de audio; Spotify no entrega el archivo |
 | benchdl | — | media proveedores internos del JS; el adaptador Go se prueba por separado |
+| deezer / dzr / deezermusic | `.play` / `.escucha` | la API directa respondió `403`; el motor unificado conserva Audius, iTunes y spotDL y tolera fallos parciales |
 
 ## Del dueño / del sistema del JS
 

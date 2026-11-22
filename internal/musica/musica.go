@@ -27,6 +27,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"shin-go/internal/utilidades"
 )
 
 // Fuentes soportadas.
@@ -54,7 +56,11 @@ func ResetURLs(dz, it string) { urlDeezer, urlITunes = dz, it }
 // MaxAudio es el tope duro de una descarga. Un tema de 4 minutos en MP3 ronda
 // los 4 MB; 24 MB deja sitio a directos y sesiones largas sin permitir que un
 // enlace raro llene el disco de un teléfono.
-const MaxAudio = 24 << 20
+const (
+	MaxAudio   = 24 << 20
+	MaxPreview = 8 << 20
+	MaxArtwork = 8 << 20
+)
 
 // Pista es el resultado unificado. Los campos vacíos no se inventan: si la
 // fuente no los da, quedan en cero.
@@ -131,26 +137,93 @@ func Nuevo(o Opciones) *Cliente {
 	}
 }
 
-func (c *Cliente) get(ctx context.Context, u string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+func (c *Cliente) get(ctx context.Context, rawURL string) ([]byte, error) {
+	u, err := c.validarURLRemota(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", c.UserAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doSeguro(req)
 	if err != nil {
 		return nil, fmt.Errorf("musica: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("musica: %s respondió %d", primerHost(u), resp.StatusCode)
+		return nil, fmt.Errorf("musica: %s respondió %d", primerHost(rawURL), resp.StatusCode)
 	}
 	// 8 MB es de sobra para una respuesta de metadatos; si llega más, algo raro
 	// pasa y no se lee.
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+}
+
+func (c *Cliente) validarURLRemota(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" || u.User != nil ||
+		(u.Scheme != "https" && u.Scheme != "http") {
+		return nil, errors.New("musica: URL remota inválida")
+	}
+	if c.esOrigenConfigurado(u) {
+		// Los endpoints configurados por el operador pueden ser HTTP (útil para
+		// un proxy local y para httptest). Los valores predeterminados son HTTPS.
+		return u, nil
+	}
+	validada, err := utilidades.ValidarURL(u.String(), utilidades.ResolverDNSIPs)
+	if err != nil {
+		return nil, fmt.Errorf("musica: URL remota rechazada: %w", err)
+	}
+	if validada.Scheme != "https" {
+		return nil, errors.New("musica: el medio remoto debe usar https")
+	}
+	return validada, nil
+}
+
+func (c *Cliente) esOrigenConfigurado(u *url.URL) bool {
+	if u == nil {
+		return false
+	}
+	for _, raw := range []string{c.Audius, urlDeezer, urlITunes} {
+		base, err := url.Parse(raw)
+		if err == nil && base.Host != "" && strings.EqualFold(base.Host, u.Host) &&
+			strings.EqualFold(base.Scheme, u.Scheme) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *Cliente) doSeguro(req *http.Request) (*http.Response, error) {
+	if req == nil || req.URL == nil {
+		return nil, errors.New("musica: petición vacía")
+	}
+	if _, err := c.validarURLRemota(req.URL.String()); err != nil {
+		return nil, err
+	}
+	base := c.HTTP
+	if base == nil {
+		base = http.DefaultClient
+	}
+	client := *base
+	previousRedirect := client.CheckRedirect
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("musica: demasiadas redirecciones")
+		}
+		if _, err := c.validarURLRemota(next.URL.String()); err != nil {
+			return err
+		}
+		if previousRedirect != nil {
+			return previousRedirect(next, via)
+		}
+		return nil
+	}
+	return client.Do(req)
 }
 
 func primerHost(u string) string {
@@ -391,7 +464,19 @@ func (c *Cliente) Buscar(ctx context.Context, consulta string, porFuente int) Bu
 		if a.Libre != b.Libre {
 			return a.Libre
 		}
-		return a.Duracion > b.Duracion
+		if a.Duracion != b.Duracion {
+			return a.Duracion > b.Duracion
+		}
+		if a.Fuente != b.Fuente {
+			return a.Fuente < b.Fuente
+		}
+		if a.Titulo != b.Titulo {
+			return a.Titulo < b.Titulo
+		}
+		if a.Artista != b.Artista {
+			return a.Artista < b.Artista
+		}
+		return a.ID < b.ID
 	})
 	return res
 }
@@ -412,13 +497,17 @@ func (c *Cliente) Descargar(ctx context.Context, p Pista, w io.Writer) (int64, e
 	if !p.Libre || p.Stream == "" {
 		return 0, ErrNoLibre
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Stream, nil)
+	streamURL, err := c.validarURLRemota(p.Stream)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, streamURL.String(), nil)
 	if err != nil {
 		return 0, err
 	}
 	req.Header.Set("User-Agent", c.UserAgent)
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.doSeguro(req)
 	if err != nil {
 		return 0, fmt.Errorf("musica: %w", err)
 	}
@@ -444,4 +533,88 @@ func (c *Cliente) Descargar(ctx context.Context, p Pista, w io.Writer) (int64, e
 		return n, fmt.Errorf("musica: el audio superó el tope de %d MB", MaxAudio>>20)
 	}
 	return n, nil
+}
+
+// DescargarPreview copia únicamente el fragmento oficial publicado por la
+// tienda. Se mantiene separado de Descargar para no presentar un preview como
+// audio completo o libre.
+func (c *Cliente) DescargarPreview(ctx context.Context, p Pista, w io.Writer) (int64, error) {
+	if strings.TrimSpace(p.Preview) == "" {
+		return 0, errors.New("musica: esa pista no tiene preview")
+	}
+	previewURL, err := c.validarURLRemota(p.Preview)
+	if err != nil {
+		return 0, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, previewURL.String(), nil)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("User-Agent", c.UserAgent)
+	resp, err := c.doSeguro(req)
+	if err != nil {
+		return 0, fmt.Errorf("musica: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		return 0, fmt.Errorf("musica: el preview respondió %d", resp.StatusCode)
+	}
+	if resp.ContentLength > MaxPreview {
+		return 0, fmt.Errorf("musica: el preview supera %d MB", MaxPreview>>20)
+	}
+	if tipo := resp.Header.Get("Content-Type"); tipo != "" && !strings.HasPrefix(tipo, "audio/") &&
+		!strings.Contains(tipo, "octet-stream") {
+		return 0, fmt.Errorf("musica: se esperaba audio y llegó %q", tipo)
+	}
+	n, err := io.Copy(w, io.LimitReader(resp.Body, MaxPreview+1))
+	if err != nil {
+		return n, fmt.Errorf("musica: %w", err)
+	}
+	if n > MaxPreview {
+		return n, fmt.Errorf("musica: el preview superó %d MB", MaxPreview>>20)
+	}
+	return n, nil
+}
+
+// DescargarCaratula trae una portada indicada por un proveedor, con defensa
+// SSRF, redirecciones revalidadas, MIME de imagen y límite de memoria.
+func (c *Cliente) DescargarCaratula(ctx context.Context, p Pista) ([]byte, error) {
+	u, err := c.validarURLRemota(p.Caratula)
+	if err != nil {
+		return nil, fmt.Errorf("musica: carátula rechazada: %w", err)
+	}
+	if u.Scheme != "https" {
+		return nil, errors.New("musica: la carátula debe usar https")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.UserAgent)
+
+	resp, err := c.doSeguro(req)
+	if err != nil {
+		return nil, fmt.Errorf("musica: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("musica: la carátula respondió %d", resp.StatusCode)
+	}
+	if resp.ContentLength > MaxArtwork {
+		return nil, fmt.Errorf("musica: la carátula supera %d MB", MaxArtwork>>20)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, MaxArtwork+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > MaxArtwork {
+		return nil, fmt.Errorf("musica: la carátula superó %d MB", MaxArtwork>>20)
+	}
+	tipo := strings.SplitN(http.DetectContentType(data), ";", 2)[0]
+	switch tipo {
+	case "image/jpeg", "image/png", "image/webp", "image/gif":
+		return data, nil
+	default:
+		return nil, fmt.Errorf("musica: la carátula no era una imagen (%s)", tipo)
+	}
 }

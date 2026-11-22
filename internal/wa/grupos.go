@@ -154,10 +154,11 @@ func (c *Client) SendMentions(ctx context.Context, chat JID, text string, mentio
 		Text:        proto.String(text),
 		ContextInfo: &waE2E.ContextInfo{MentionedJID: lista},
 	}}
-	return c.Queue.Do(ctx, len([]rune(text)), priority, func() error {
-		_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
-		return err
-	})
+	return c.queueDedup(ctx, chat, "mentions", len([]rune(text)), priority,
+		[][]byte{[]byte(text), stableJSON(lista)}, func() error {
+			_, err := c.waClient.SendMessage(ctx, chat.whatsmeow(), msg)
+			return err
+		})
 }
 
 // MaxMentions: WhatsApp corta alrededor de 50 menciones por mensaje y aplicar

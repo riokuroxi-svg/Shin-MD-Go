@@ -289,7 +289,7 @@ gorutinas o sin memoria por dentro.
 Verificación:
 
 ```bash
-go test -race ./...     # 8 paquetes en verde
+go test -race ./...     # detector de carreras en todos los paquetes
 go build ./... && go vet ./... && gofmt -l .
 ```
 

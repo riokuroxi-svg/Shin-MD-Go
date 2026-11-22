@@ -47,6 +47,7 @@ type Messenger interface {
 	SendMenu(context.Context, wa.JID, string, string, string, bool, ...Button) error
 	SendButtons(context.Context, wa.JID, string, string, string, bool, ...Button) error
 	SendButtonsImage(context.Context, wa.JID, []byte, string, string, string, bool, ...Button) error
+	SendButtonsImageWithID(context.Context, wa.JID, string, []byte, string, string, string, bool, ...Button) error
 	SendList(context.Context, wa.JID, string, string, string, string, bool, ...ListSection) error
 	SendCarousel(context.Context, wa.JID, string, bool, ...Card) error
 }
@@ -74,8 +75,8 @@ type Context struct {
 
 	Command string
 	Args    []string
-	Text    string // texto completo sin el prefijo
-	Raw     string // texto tal cual llegó
+	Text    string // argumentos completos después del nombre del comando
+	Raw     string // texto recibido, ya limpio de controles invisibles
 
 	// CmdPriority es la prioridad del comando que se está ejecutando. La pone
 	// el router a partir de Command.Priority y la respetan TODOS los envíos
@@ -153,6 +154,10 @@ func (c *Context) ReplyButtons(title, body, footer string, buttons ...Button) er
 
 func (c *Context) ReplyImage(image []byte, title, body, footer string, buttons ...Button) error {
 	return c.outbox().SendButtonsImage(c.Ctx, c.Chat, image, title, body, footer, c.CmdPriority, buttons...)
+}
+
+func (c *Context) ReplyImageWithID(messageID string, image []byte, title, body, footer string, buttons ...Button) error {
+	return c.outbox().SendButtonsImageWithID(c.Ctx, c.Chat, messageID, image, title, body, footer, c.CmdPriority, buttons...)
 }
 
 func (c *Context) ReplyList(title, body, buttonText, footer string, sections ...ListSection) error {

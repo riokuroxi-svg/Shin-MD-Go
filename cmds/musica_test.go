@@ -129,7 +129,7 @@ func TestDescargarFiltros(t *testing.T) {
 		_, _ = w.Write([]byte("<html><body>no es audio</body></html>"))
 	}))
 	t.Cleanup(html.Close)
-	cli2 := musica.Nuevo(musica.Opciones{Timeout: 5 * time.Second})
+	cli2 := musica.Nuevo(musica.Opciones{Timeout: 5 * time.Second, AudiusURL: html.URL})
 	p := musica.Pista{Fuente: "pirata", Titulo: "x", Libre: true, Stream: html.URL}
 	_, err = cli2.Descargar(context.Background(), p, &yardaMusica{})
 	if err == nil || !strings.Contains(err.Error(), "se esperaba audio") {
@@ -161,6 +161,22 @@ func TestMotivosDeFallo(t *testing.T) {
 }
 
 // La lista guardada: «.play 2» elige la segunda.
+func TestOrigenMusicaSeguroSoloAceptaElProveedorDeclarado(t *testing.T) {
+	if !origenMusicaSeguro(musica.Pista{Fuente: musica.FuenteITunes, Origen: "https://music.apple.com/mx/album/x"}) {
+		t.Fatal("se rechazó el enlace oficial de iTunes")
+	}
+	for _, p := range []musica.Pista{
+		{Fuente: musica.FuenteITunes, Origen: "https://music.apple.com.evil.test/x"},
+		{Fuente: musica.FuenteAudius, Origen: "https://music.apple.com/x"},
+		{Fuente: musica.FuenteSpotDL, Backend: musica.BackendSpotDL, Origen: "http://open.spotify.com/track/x"},
+		{Fuente: musica.FuenteITunes, Origen: "https://user@music.apple.com/x"},
+	} {
+		if origenMusicaSeguro(p) {
+			t.Errorf("se aceptó origen ajeno: %+v", p)
+		}
+	}
+}
+
 func TestConsultaSpotDLSeFuerzaSinRomperTextoNormal(t *testing.T) {
 	cases := []struct {
 		in    string
@@ -208,6 +224,11 @@ func TestListaGuardadaYNumerada(t *testing.T) {
 	libres, conPreview := cuentas(l.pistas)
 	if libres != 2 || conPreview != 1 {
 		t.Fatalf("cuentas: libres=%d previews=%d", libres, conPreview)
+	}
+	// Una fuente puede ofrecer ambas acciones; no se debe ocultar el preview.
+	libres, conPreview = cuentas([]musica.Pista{{Libre: true, Preview: "https://example.test/p.m4a"}})
+	if libres != 1 || conPreview != 1 {
+		t.Fatalf("cuentas combinadas: libres=%d previews=%d", libres, conPreview)
 	}
 }
 

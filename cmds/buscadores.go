@@ -10,8 +10,8 @@
 //	               hacía igual) y baja el archivo con tope.
 //	.gdrive      → reescribe el enlace a descarga directa de Drive (uc?id=).
 //	.apk         → la banca de Aptoide, que tiene API JSON pública.
-//	.deezer/.itunes/.spotify → buscan con el motor de música (B6) — solo el
-//	               catálogo que sí deja bajar.
+//	.play/.escucha → motor de música con fallbacks; el acceso directo a Deezer
+//	               se retiró porque su API pública responde 403 en esta red.
 //	.ytsearch    → Piped (instancia configurable). Si esa instancia cae o
 //	               cambia, el error lo dice.
 package cmds
@@ -29,7 +29,7 @@ import (
 	"time"
 
 	"shin-go/internal/bot"
-	"shin-go/internal/musica"
+	"shin-go/internal/utilidades"
 )
 
 func init() {
@@ -59,11 +59,6 @@ func init() {
 		Run:  cmdApk,
 	})
 	bot.Register(bot.Command{
-		Name: "deezer", Aliases: []string{"dzr", "deezermusic"}, Category: bot.CatDownload,
-		Desc: "Busca en Deezer: la ficha y el preview de 30 s.",
-		Run:  func(c *bot.Context) error { return cmdMusicaFuente(c, (*musica.Cliente).BuscarDeezer) },
-	})
-	bot.Register(bot.Command{
 		Name: "ytsearch", Aliases: []string{"yts", "search"}, Category: bot.CatDownload,
 		Desc: "Busca en YouTube los títulos (Piped; para bajar, .yt <url>).",
 		Run:  cmdYtSearch,
@@ -90,8 +85,12 @@ func cmdImagen(c *bot.Context) error {
 	if q == "" {
 		return c.Reply("¿Qué busco? Ej: *.imagen gatitos*")
 	}
+	base, err := url.Parse(urlOpenverse)
+	if err != nil || base.Hostname() == "" {
+		return c.Reply("El buscador de imágenes está mal configurado.")
+	}
 	u := urlOpenverse + "?q=" + url.QueryEscape(q) + "&page_size=5"
-	datos, err := getCorto(c.Ctx, u)
+	datos, err := getCortoLimite(c.Ctx, u, 12<<20, base.Hostname())
 	if err != nil {
 		return c.Reply("El buscador de imágenes no responde; prueba en un rato.")
 	}
@@ -125,8 +124,8 @@ const maxDescargaDirecta = 100 << 20 // mismo tope que los vídeos
 
 func cmdMediafire(c *bot.Context) error {
 	enlace := strings.TrimSpace(c.Text)
-	if !strings.Contains(enlace, "mediafire.com") {
-		return c.Reply("Esperaba un enlace de MediaFire: https://www.mediafire.com/file/…")
+	if !mediafireURLSegura(enlace) {
+		return c.Reply("Esperaba un enlace HTTPS de MediaFire: https://www.mediafire.com/file/…")
 	}
 	pagina, err := getCorto(c.Ctx, enlace)
 	if err != nil {
@@ -137,6 +136,18 @@ func cmdMediafire(c *bot.Context) error {
 		return c.Reply("la página no enseñaba el botón de descarga (¿será carpeta o está caído?).")
 	}
 	return descargarDirecto(c, html.UnescapeString(string(m[1])), "archivo de MediaFire")
+}
+
+func mediafireURLSegura(raw string) bool {
+	if len(raw) == 0 || len(raw) > 2048 {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
+	return host == "mediafire.com" || strings.HasSuffix(host, ".mediafire.com")
 }
 
 // idDrive extrae el ID de cualquiera de los formatos de Drive.
@@ -154,15 +165,30 @@ func cmdGdrive(c *bot.Context) error {
 }
 
 // descargarDirecto: GET con tope y mandar como documento, como el JS.
-func descargarDirecto(c *bot.Context, u, etiqueta string) error {
+func descargarDirecto(c *bot.Context, rawURL, etiqueta string) error {
+	u, err := utilidades.ValidarURL(rawURL, utilidades.ResolverDNSIPs)
+	if err != nil || u.Scheme != "https" {
+		return c.Reply("el enlace de descarga no es HTTPS público o está mal formado.")
+	}
 	ctx, cancel := context.WithTimeout(c.Ctx, 90*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
 	if err != nil {
 		return c.Reply("el enlace está mal formado.")
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; Shin-MD-Go)")
-	resp, err := http.DefaultClient.Do(req)
+	client := *http.DefaultClient
+	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("demasiadas redirecciones")
+		}
+		validada, err := utilidades.ValidarURL(next.URL.String(), utilidades.ResolverDNSIPs)
+		if err != nil || validada.Scheme != "https" {
+			return fmt.Errorf("redirección de descarga rechazada")
+		}
+		return nil
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return c.Reply("no pude bajar " + etiqueta + ".")
 	}
@@ -191,15 +217,25 @@ func descargarDirecto(c *bot.Context, u, etiqueta string) error {
 
 // ─── apk (Aptoide tiene API JSON pública) ─────────────────────────────────
 
-var urlAptoide = "https://webservices.aptoide.com/apt/7/apksearch"
+var urlAptoide = "https://ws75.aptoide.com/api/7/apps/search"
 
 type aptoideResp struct {
+	Info struct {
+		Status string `json:"status"`
+	} `json:"info"`
 	Datalist struct {
 		List []struct {
-			Name string `json:"name"`
-			Size int64  `json:"size"`
-			File struct {
-				Path string `json:"path"`
+			Name    string `json:"name"`
+			Package string `json:"package"`
+			Size    int64  `json:"size"`
+			Icon    string `json:"icon"`
+			File    struct {
+				Path     string `json:"path"`
+				Version  string `json:"vername"`
+				FileSize int64  `json:"filesize"`
+				Malware  struct {
+					Rank string `json:"rank"`
+				} `json:"malware"`
 			} `json:"file"`
 			Store struct {
 				Name string `json:"name"`
@@ -213,80 +249,162 @@ func cmdApk(c *bot.Context) error {
 	if q == "" {
 		return c.Reply("¿Qué app busco? Ej: *.apk whatsapp business*")
 	}
+	base, err := url.Parse(urlAptoide)
+	if err != nil || base.Hostname() == "" {
+		return c.Reply("Aptoide está mal configurado.")
+	}
 	u := urlAptoide + "?query=" + url.QueryEscape(q) + "&limit=5"
-	datos, err := getCorto(c.Ctx, u)
+	datos, err := getCortoLimite(c.Ctx, u, 12<<20, base.Hostname())
 	if err != nil {
 		return c.Reply("Aptoide no responde ahora.")
 	}
 	var r aptoideResp
-	if json.Unmarshal(datos, &r) != nil || len(r.Datalist.List) == 0 {
+	if json.Unmarshal(datos, &r) != nil || (r.Info.Status != "" && r.Info.Status != "OK") {
+		return c.Reply("Aptoide devolvió una respuesta que no pude validar.")
+	}
+	if len(r.Datalist.List) == 0 {
 		return c.Reply("no aparece esa app en Aptoide.")
 	}
 	ap := r.Datalist.List[0]
-	return c.Reply(fmt.Sprintf("📦 *%s*\n🏪 %s · %.1f MB\n⬇ %s\n\n_Si la quieres por el bot, dime y te paso el archivo (tope 100 MB)._",
-		ap.Name, ap.Store.Name, float64(ap.Size)/1048576.0, ap.File.Path))
+	size := ap.File.FileSize
+	if size <= 0 {
+		size = ap.Size
+	}
+	body := fmt.Sprintf("📦 *%s*\n🧩 %s · versión %s\n🏪 %s · %.1f MB\n🛡 Verificación Aptoide: %s",
+		bot.Esc(ap.Name), bot.Esc(ap.Package), bot.Esc(orDefault2(ap.File.Version, "—")),
+		bot.Esc(ap.Store.Name), float64(size)/1048576.0,
+		bot.Esc(orDefault2(ap.File.Malware.Rank, "sin dato")))
+	buttons := make([]bot.Button, 0, 1)
+	if aptoideURLSegura(ap.File.Path, "pool.apk.aptoide.com") {
+		buttons = append(buttons, bot.CTAURL("⬇️ Descargar APK", ap.File.Path))
+	}
+	if len(buttons) == 0 {
+		return c.Reply(body + "\n\nAptoide no devolvió un enlace de descarga seguro.")
+	}
+	if aptoideURLSegura(ap.Icon, "pool.img.aptoide.com") {
+		if icono, err := getCortoLimite(c.Ctx, ap.Icon, 4<<20, "pool.img.aptoide.com"); err == nil {
+			return c.ReplyImage(icono, "Aptoide", body, "Instala APK únicamente si confías en la tienda y la firma.", buttons...)
+		}
+	}
+	return c.ReplyButtons("Aptoide", body, "Instala APK únicamente si confías en la tienda y la firma.", buttons...)
 }
 
-// ─── música por buscador (B6 reutilizado) ───────────────────────────────────
-
-// cmdMusicaFuente: .deezer y hermanos usan el mismo motor de música.
-// f es un *método* del motor ((*musica.Cliente).BuscarDeezer …) como función-método.
-func cmdMusicaFuente(c *bot.Context, f func(*musica.Cliente, context.Context, string, int) ([]musica.Pista, error)) error {
-	q := strings.TrimSpace(c.Text)
-	if q == "" {
-		return c.Reply("¿Qué busco ahí? Ej: *." + c.Command + " daft punk*")
+func aptoideURLSegura(raw, host string) bool {
+	if len(raw) == 0 || len(raw) > 2048 {
+		return false
 	}
-	pistas, err := f(clienteMusica(), c.Ctx, q, 5)
-	if err != nil {
-		return c.Reply("esa fuente no responde ahora (" + cerca(err.Error(), 80) + ").")
-	}
-	if len(pistas) == 0 {
-		return c.Reply("no aparece ahí; prueba *.play*, que busca en más sitios.")
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "🎵 *%d en %s*\n\n", len(pistas), c.Command)
-	for i, p := range pistas {
-		lnk := "solo ficha"
-		if p.Preview != "" {
-			lnk = "preview 30 s: " + p.Preview
-		}
-		fmt.Fprintf(&sb, "%d. *%s* — %s\n   %s\n", i+1, p.Titulo, p.Artista, lnk)
-	}
-	return c.Reply(sb.String())
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && strings.EqualFold(u.Hostname(), host) && u.User == nil && u.Port() == ""
 }
 
 // ─── ytsearch (Piped, honesto) ──────────────────────────────────────────────
 
-// urlPiped es la instancia Piped para .ytsearch. Las instancias públicas se
-// caen y se rotan; quedará en config si hace falta moverla sin recompilar.
-var urlPiped = "https://pipedapi.kavin.rocks"
+// Piped no tiene una instancia pública permanente. Estas dos respondieron en
+// la auditoría de noviembre de 2026; se prueba la segunda solo si la primera falla.
+var urlPiped = "https://pipedapi.ducks.party"
+var urlPipedFallbacks = []string{"https://api.piped.private.coffee"}
+
+type pipedVideo struct {
+	Type      string `json:"type"`
+	Title     string `json:"title"`
+	URL       string `json:"url"`
+	Uploader  string `json:"uploaderName"`
+	Duration  int64  `json:"duration"`
+	Thumbnail string `json:"thumbnail"`
+}
+
+type pipedSearchResp struct {
+	Items []pipedVideo `json:"items"`
+}
 
 func cmdYtSearch(c *bot.Context) error {
 	q := strings.TrimSpace(c.Text)
 	if q == "" {
 		return c.Reply("¿Qué busco en YouTube? Ej: *.ytsearch lofi*")
 	}
-	u := urlPiped + "/search?q=" + url.QueryEscape(q) + "&filter=videos"
-	datos, err := getCorto(c.Ctx, u)
+	videos, err := buscarPiped(c.Ctx, q)
 	if err != nil {
-		return c.Reply("El buscador de YouTube (Piped) no responde ahora; con *.yt <url>* puedes bajar uno que ya tengas.")
+		return c.Reply("Las instancias verificadas de Piped no responden ahora; con *.yt <url>* puedes bajar uno que ya tengas.")
 	}
-	var r []struct {
-		Title    string `json:"title"`
-		Url      string `json:"url"`
-		Uploader string `json:"uploaderName"`
-		Duration int64  `json:"duration"`
-	}
-	if json.Unmarshal(datos, &r) != nil || len(r) == 0 {
-		return c.Reply("no salió nada; puede que la instancia Piped esté caída hoy.")
+	if len(videos) == 0 {
+		return c.Reply("no salió ningún video con esa búsqueda.")
 	}
 	var sb strings.Builder
-	sb.WriteString("📺 *YouTube — " + q + "*\n\n")
-	for i, v := range r[:min(5, len(r))] {
+	sb.WriteString("📺 *YouTube — " + bot.Esc(q) + "*\n\n")
+	shown := 0
+	for _, v := range videos {
+		watchURL, ok := youtubeURLPiped(v.URL)
+		if !ok || (v.Type != "" && v.Type != "stream" && v.Type != "video") {
+			continue
+		}
+		shown++
+		duracion := "en vivo / duración desconocida"
 		if v.Duration > 0 {
-			fmt.Fprintf(&sb, "%d. *%s* (%dm%02ds)\n   👤 %s\n   https://youtu.be%s\n\n", i+1, v.Title, v.Duration/60, v.Duration%60, v.Uploader, v.Url)
+			duracion = fmt.Sprintf("%dm%02ds", v.Duration/60, v.Duration%60)
+		}
+		fmt.Fprintf(&sb, "%d. *%s* (%s)\n   👤 %s\n   %s\n\n",
+			shown, bot.Esc(v.Title), duracion, bot.Esc(v.Uploader), watchURL)
+		if shown == 5 {
+			break
 		}
 	}
-	sb.WriteString("_Para bajar: .yt <enlace> · para música libre: .play <nombre>_")
+	if shown == 0 {
+		return c.Reply("Piped respondió, pero no devolvió enlaces de video válidos.")
+	}
+	sb.WriteString("_Para bajar: .yt <enlace> · para música: .play <nombre>_")
 	return c.Reply(strings.TrimRight(sb.String(), "\n"))
+}
+
+func buscarPiped(ctx context.Context, query string) ([]pipedVideo, error) {
+	hosts := append([]string{urlPiped}, urlPipedFallbacks...)
+	vistos := make(map[string]bool, len(hosts))
+	var ultimo error
+	for _, host := range hosts {
+		host = strings.TrimRight(strings.TrimSpace(host), "/")
+		if host == "" || vistos[host] {
+			continue
+		}
+		vistos[host] = true
+		base, parseErr := url.Parse(host)
+		if parseErr != nil || base.Hostname() == "" ||
+			(base.Scheme != "https" && base.Scheme != "http") || base.User != nil {
+			ultimo = fmt.Errorf("instancia Piped inválida")
+			continue
+		}
+		u := host + "/search?q=" + url.QueryEscape(query) + "&filter=videos"
+		datos, err := getCortoLimite(ctx, u, 4<<20, base.Hostname())
+		if err != nil {
+			ultimo = err
+			continue
+		}
+		var env pipedSearchResp
+		if err := json.Unmarshal(datos, &env); err == nil && env.Items != nil {
+			return env.Items, nil
+		}
+		// Compatibilidad con instancias antiguas que devolvían el arreglo en
+		// la raíz. No se usa para el contrato actual, pero evita una regresión.
+		var legacy []pipedVideo
+		if err := json.Unmarshal(datos, &legacy); err == nil {
+			return legacy, nil
+		}
+		ultimo = fmt.Errorf("Piped devolvió un esquema desconocido")
+	}
+	if ultimo == nil {
+		ultimo = fmt.Errorf("sin instancias Piped configuradas")
+	}
+	return nil, ultimo
+}
+
+var youtubeID = regexp.MustCompile(`^[A-Za-z0-9_-]{11}$`)
+
+func youtubeURLPiped(raw string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Path != "/watch" {
+		return "", false
+	}
+	id := u.Query().Get("v")
+	if !youtubeID.MatchString(id) {
+		return "", false
+	}
+	return "https://youtu.be/" + id, true
 }

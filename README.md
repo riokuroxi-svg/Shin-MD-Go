@@ -11,7 +11,7 @@
 ![Licencia](https://img.shields.io/badge/licencia-AGPL--3.0--only-EE3D86?style=flat-square&labelColor=2F1A24)
 ![Termux](https://img.shields.io/badge/Termux-arm64_estático-000000?style=flat-square&labelColor=2F1A24)
 
-<img alt="Aviso: en desarrollo" src="https://img.shields.io/badge/⚠️_ESTO_NO_ES_EL_BOT_COMPLETO_AÚN-faltan_los_bloques_B2--B8-EE3D86?style=for-the-badge&labelColor=2F1A24">
+<img alt="Aviso: candidato en pruebas" src="https://img.shields.io/badge/⚠️_CANDIDATO_EN_PRUEBAS-falta_validación_en_WhatsApp_real-EE3D86?style=for-the-badge&labelColor=2F1A24">
 
 </div>
 
@@ -21,9 +21,10 @@
 > Este repositorio es la **migración del núcleo** de
 > [Shin-MD](https://github.com/riokuroxi-svg/Shin-MD) (JavaScript/Baileys) a **Go**, sobre
 > [whatsmeow](https://github.com/tulir/whatsmeow).
-> Lo que está aquí **compila, pasa pruebas y arranca de verdad**, pero todavía no tiene
-> los 211 comandos: el bot de JS sigue siendo el bot de producción hasta cerrar los
-> bloques B4–B8. Las versiones se publican cuando el bloque está verificado, no antes.
+> Lo que está aquí **compila, pasa pruebas y arranca de verdad**; el catálogo ya carga
+> **211 comandos únicos**. Sigue como candidato hasta validar en una cuenta real los
+> botones, medios, vistos y presencia descritos en la
+> [auditoría de noviembre de 2026](docs/AUDITORIA-COMANDOS-2026-11.md).
 
 ## ¿Por qué una versión en Go?
 
@@ -37,11 +38,12 @@ No es un capricho de lenguaje: es quitar de en medio la parte que se rompe.
 | Cola de envío con `async` frágil (se congelaba si un envío fallaba) | Goroutine con `context`, timeout y `recover()` por handler |
 | Pruebas que necesitan medio bot levantado | `go test ./...` prueba botones, parseo y SQLite **sin abrir WhatsApp** |
 
-El motor anti-ban está portado **1:1** (misma huella: σ 0.25 · base 1200 ms · +25 ms/car ·
-warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD según el
-[NOTICE](NOTICE).
+El motor anti-abuso conserva el ritmo de Shin-MD (σ 0.25 · base 1200 ms · +25 ms/car ·
+warm-up 20→500 en 7 días) y añade serialización, límites, deduplicación exacta y APIs
+estándar de WhatsApp; no falsifica metadata del protocolo. Sigue siendo una obra derivada
+de Shin-MD según el [NOTICE](NOTICE).
 
-## Estado actual — bloques B0 a B5.1 y B7.0 ✅
+## Estado actual — bloques B0 a B8 ✅
 
 | Bloque | Qué incluye | Estado |
 |---|---|---|
@@ -57,16 +59,16 @@ warm-up 20→500 en 7 días), así que sigue siendo una obra derivada de Shin-MD
 | **B5.1 · Utilidades (1/2)** | `.qr` `.morse` `.demorse` `.recordar` `.olvidar` `.say` `.encuesta` `.pfp` `.wastalk` `.readviewonce` `.get`, encuestas y quiz nativos, recordatorios que sobreviven al reinicio | ✅ **hecho** ([docs/UTILIDADES.md](docs/UTILIDADES.md)) |
 | **B7.0 · Operación y estado** | `.health` `.runtime` `.warmup` `.infobot` `.compat` `.allmenu` `.restart` `.update` `.subir` `.cache` `.shell` `.setmenu` | ✅ **hecho** ([docs/OPERACION.md](docs/OPERACION.md)) |
 | **B5.2 · Utilidades (2/2)** | `.traducir` (2 proveedores + detector propio) `.tts` `.acortar` `.tourl` `.crypto` `.letra` `.gitclone` `.githubstalk` `.ai` (con `GEMINI_KEY`) y `.hd` + `.carbon` **locales** (sin subir nada a webs ajenas); `.benchdl` queda para B6 | ✅ **hecho** ([docs/UTILIDADES2.md](docs/UTILIDADES2.md)) |
-| **B6.0 · Música (escucha y descarga)** | `.play` usa Audius/Deezer/iTunes y puede añadir un ejecutable **spotDL opcional** para enlaces Spotify o `spotdl:consulta`; lista numerada y semáforo por chat · `.escucha` conserva previews oficiales | ✅ **hecho** ([docs/MUSICA.md](docs/MUSICA.md)) |
+| **B6.0 · Música (escucha y descarga)** | `.play` usa Audius/iTunes y tolera la caída de Deezer; puede añadir **spotDL opcional** para Spotify; muestra carátula y botones, mantiene `.play N` y semáforo por chat · `.escucha` envía previews oficiales | ✅ **hecho** ([docs/MUSICA.md](docs/MUSICA.md)) |
 | **B6.1 · Descargas sociales** | `.yt` `.ytmp3` `.tiktok` `.ig` `.fb` `.x` vía **yt-dlp cuando está instalado** (decisión auditada: YouTube 2026 exige PoToken; no se finge, se explica) — tope 100 MB, plazo 5 min | ✅ **hecho** |
 | **B7 · Panel web** | `/health` `/queue` `/memoria` `/metrics` con failsafe loopback + Basic auth con candado, **rotación de logs** (4 MB × 3), unidad `systemd` | ✅ **hecho** ([docs/PANEL.md](docs/PANEL.md)) |
-| **B8 · Paridad de catálogo y tests** | los 640 nombres del JS están en Go o justificados en [NO_PORTADO](docs/NO_PORTADO.md); `TestParidadCatalogo` lo blinda · 510 tests en 19 paquetes | ✅ **hecho** |
+| **B8 · Paridad de catálogo y tests** | los 640 nombres del JS están en Go o justificados en [NO_PORTADO](docs/NO_PORTADO.md); `TestParidadCatalogo` lo blinda y la matriz prueba todos los paquetes | ✅ **hecho** |
 
 Detalle completo del plan: **[docs/MIGRACION.md](docs/MIGRACION.md)**.
 
 ## Lo que ya funciona (probado, no prometido)
 
-**Comandos cargados hoy: 131 únicos · 418 nombres · 4 hooks.**
+**Comandos cargados hoy: 211 únicos · 743 nombres · 4 hooks.**
 
 | Comando | Qué hace |
 |---|---|
@@ -360,7 +362,7 @@ Mapa de equivalencias archivo por archivo con el bot de JS: [docs/MIGRACION.md](
 ## Pruebas
 
 ```bash
-go test ./...    # 510 pruebas: botones, carrusel, lista, pin, evento, encuesta,
+go test ./...    # pruebas de botones, carrusel, lista, pin, evento, encuesta,
                  # parseo y envoltorios, cola anti-ban, SQLite, economía
                  # (concurrencia de dinero y reclamos), rachas, catálogo, gacha,
                  # advertencias y actividad de grupo, juegos de azar (probabilidad
@@ -370,7 +372,7 @@ go test ./...    # 510 pruebas: botones, carrusel, lista, pin, evento, encuesta,
                  # utilidades (morse ida y vuelta, QR y su PNG, parser de
                  # encuesta/quiz/multi, el protobuf que se envía, filtro anti-SSRF)
                  # (la única que se salta sola es la de vídeo, si no hay ffmpeg)
-go test -race ./...   # lo mismo con el detector de carreras: los 8 paquetes en verde
+go test -race ./...   # lo mismo con el detector de carreras
 go vet ./...     # limpio
 gofmt -l .       # limpio
 ```
@@ -379,6 +381,14 @@ CI en cada push: [.github/workflows/test.yml](.github/workflows/test.yml).
 
 ## Historial
 
+- **0.27.0-rc1** — **reparación de proveedores y actividad de chat**: `.pat`
+  vuelve a enviar animación mediante nekos.best y GIF→MP4 correcto; `.anime`,
+  `.apk` y `.ytsearch` usan contratos operativos con límites y fallbacks. `.rw`
+  lleva un botón **Reclamar** ligado al ID oficial del mensaje y `.play` muestra
+  carátula, selector y acciones. Se añaden vistos, ciclo composing→paused y
+  deduplicación exacta sin falsificar metadata. Se retiraron los accesos directos
+  a Deezer y Gelbooru tras respuestas 403/401. Informe y pruebas pendientes en
+  una cuenta real: [`docs/AUDITORIA-COMANDOS-2026-11.md`](docs/AUDITORIA-COMANDOS-2026-11.md).
 - **0.26.0-rc1** — **spotDL opcional para `.play`, sin Node**: un adaptador Go
   invoca un ejecutable configurado por `SPOTDL_PATH`, resuelve enlaces Spotify
   o `spotdl:consulta` y entrega una sola pista MP3. Valida ffmpeg, duración,

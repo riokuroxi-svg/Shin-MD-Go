@@ -202,8 +202,9 @@ func TestMasDeTresBotonesLlevaBottomSheet(t *testing.T) {
 }
 
 type envioGrabado struct {
-	msg   *waE2E.Message
-	nodes []binary.Node
+	msg       *waE2E.Message
+	nodes     []binary.Node
+	messageID string
 }
 
 type transporteFalso struct {
@@ -212,7 +213,15 @@ type transporteFalso struct {
 }
 
 func (t *transporteFalso) Send(_ context.Context, _ types.JID, msg *waE2E.Message, nodes []binary.Node) error {
-	t.envios = append(t.envios, envioGrabado{msg: msg, nodes: nodes})
+	return t.grabar(msg, nodes, "")
+}
+
+func (t *transporteFalso) SendWithID(_ context.Context, _ types.JID, msg *waE2E.Message, nodes []binary.Node, messageID string) error {
+	return t.grabar(msg, nodes, messageID)
+}
+
+func (t *transporteFalso) grabar(msg *waE2E.Message, nodes []binary.Node, messageID string) error {
+	t.envios = append(t.envios, envioGrabado{msg: msg, nodes: nodes, messageID: messageID})
 	i := len(t.envios) - 1
 	if i < len(t.errores) {
 		return t.errores[i]
@@ -246,6 +255,25 @@ func TestCadenaBaileysNativaTexto(t *testing.T) {
 	}
 	if len(log.lineas) != 2 || !strings.Contains(log.lineas[0], "probando nativa") || !strings.Contains(log.lineas[1], "probando texto") {
 		t.Fatalf("log de degradación = %v", log.lineas)
+	}
+}
+
+func TestCadenaConservaIDPregeneradoEnFallbacks(t *testing.T) {
+	transporte := &transporteFalso{errores: []error{errors.New("rico no"), errors.New("nativo no"), nil}}
+	cadena := NuevaCadena(transporte, nil, Baileys(), Nativa(), Texto())
+	const id = "3EB01234567890ABCDEF12"
+	err := cadena.SendButtonsWithID(context.Background(), jidGrupo(t), id,
+		"Roll", "Personaje", "60 segundos", nil, QuickReply("Reclamar", "claim:"+id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(transporte.envios) != 3 {
+		t.Fatalf("envíos=%d", len(transporte.envios))
+	}
+	for i, envio := range transporte.envios {
+		if envio.messageID != id {
+			t.Errorf("estrategia %d usó ID %q", i, envio.messageID)
+		}
 	}
 }
 

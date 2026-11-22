@@ -208,7 +208,7 @@ falla, el diagnóstico no.
 
 ```
 go build ./... && go vet ./... && gofmt -l .   → limpio
-go test ./...                                  → 310 pruebas
+go test -count=1 ./...                         → todos los paquetes en verde
 go test -race -count=1 ./cmds ./internal/xlog ./internal/store → verde
 ```
 

@@ -490,6 +490,9 @@ func TestSinFFmpegAvisaBien(t *testing.T) {
 	if _, err := WebPAVideo(t.Context(), []byte("x"), 3); err != ErrSinFFmpeg {
 		t.Fatalf("WebPAVideo sin ffmpeg = %v, se esperaba ErrSinFFmpeg", err)
 	}
+	if _, err := GIFAVideo(t.Context(), []byte("GIF89a")); err != ErrSinFFmpeg {
+		t.Fatalf("GIFAVideo sin ffmpeg = %v, se esperaba ErrSinFFmpeg", err)
+	}
 }
 
 // ─── conversión real con ffmpeg (se salta si no está instalado) ─────────────
@@ -508,6 +511,23 @@ func videoDePrueba(t *testing.T) []byte {
 		t.Skipf("no se pudo generar el vídeo de prueba: %v (%s)", err, errb.String())
 	}
 	return out.Bytes()
+}
+
+func TestGIFAVideoConFFmpeg(t *testing.T) {
+	if !HayFFmpeg() {
+		t.Skip("ffmpeg no está instalado")
+	}
+	var entrada bytes.Buffer
+	if err := gif.Encode(&entrada, lienzo(63, 47), nil); err != nil {
+		t.Fatal(err)
+	}
+	mp4, err := GIFAVideo(t.Context(), entrada.Bytes())
+	if err != nil {
+		t.Fatalf("GIFAVideo: %v", err)
+	}
+	if len(mp4) < 16 || !bytes.Contains(mp4[:min(len(mp4), 64)], []byte("ftyp")) {
+		t.Fatalf("salida no parece MP4: %d bytes, cabecera %q", len(mp4), mp4[:min(len(mp4), 16)])
+	}
 }
 
 func TestVideoAWebPConFFmpeg(t *testing.T) {
